@@ -1,114 +1,119 @@
 <p align="center"><img src="assets/logo.png" alt="Adder" width="420" /></p>
 
-# Adder
+<p align="center"><b>A spreadsheet that runs Python, entirely in your browser.</b></p>
 
-A browser spreadsheet scripted in Python. See `brief.md` for goals.
+<p align="center">
+Excel-style formulas · a canvas grid that stays smooth at 100k rows · Python scripts and custom functions via Pyodide · xlsx &amp; CSV · no server, no account
+</p>
 
-## Stack
-- TypeScript + Vite; React for the chrome, canvas for the grid.
-- Calc engine: [IronCalc](https://github.com/ironcalc/IronCalc) via `@ironcalc/wasm` 0.8.4, behind the `Engine` interface in `src/engine/types.ts`.
+<p align="center"><img src="assets/screenshot.png" alt="Adder with a Python script defining a MARGIN() custom function used in the grid" /></p>
 
-## Develop
-```sh
-npm install
-npm run dev        # http://localhost:5173 (COOP/COEP headers on)
-npm test           # vitest
-npm run e2e        # playwright (needs: sudo npx playwright install-deps chromium)
-```
+---
 
-## Status
-- [x] M1 spike: IronCalc loads, set/get cells, `=SUM`, batch writes, bytes round-trip.
-- [x] M2 grid: canvas viewport with virtual scrolling, selection, keyboard navigation (arrows, Ctrl+arrows, Page, Home/End, Enter/Tab cycling), an in-cell editor with click-to-reference, a formula bar, and column resizing.
-- [x] M3 workbook:
-  - Sheet tabs: add, rename (double-click), delete (right-click).
-  - Undo and redo.
-  - Copy, cut and paste: internal pastes keep formulas and styles; TSV from other apps also works.
-  - Workbooks are saved to IndexedDB with debounced autosave, and you can open or create them from the toolbar.
+## Why
 
-- Multi-cell editing:
-  - Pasting into a selection larger than what was copied repeats the copy across it (Excel semantics), shifting relative references.
-  - Ctrl+Enter, in the cell editor or the formula bar, writes the value to every selected cell.
-  - Either one is a single undo step.
-- Row and column selection and insert:
-  - Ctrl+Space selects the selected columns; Shift+Space selects the rows.
-  - Ctrl+Shift+Plus (or Ctrl+Alt+=) inserts that many rows or columns before a whole-row or whole-column selection.
-  - Ctrl+Minus (or Ctrl+Alt+-) deletes the selected rows or columns.
-  - These are also the browser's zoom keys, so they only act (and block zoom) while whole rows or columns are selected.
-  - IronCalc refuses an insert when the sheet's last row or column has data; the app shows why.
-- Clearing or copying a huge selection (e.g. Ctrl+A) only touches cells that hold data.
-- [x] M4 files:
-  - .xlsx import and export through SheetJS CE (`src/io/xlsx.ts`, behind `XlsxCodec`).
-  - CSV import goes into a new sheet, with RFC 4180 parsing and delimiter sniffing.
-  - CSV export writes the active sheet's displayed values.
+Spreadsheets are great at showing data and bad at expressing logic. Google Sheets gives you Apps Script and Excel gives you VBA. Adder gives you **Python**, with pandas and numpy, running locally next to your sheet. You don't need a backend, an install or a sign-in. Your workbooks stay in your browser.
 
-- [x] M5 Python:
-  - Pyodide 314.0.7 (Python 3.14) runs in a Web Worker and loads lazily from jsDelivr on the first run.
-  - Script panel with a Monaco editor, Run (Ctrl+Enter) and Stop, plus a console with cleaned-up tracebacks.
-  - The `adder` module reads and writes ranges and works with pandas DataFrames.
-  - numpy and pandas load on demand.
+## Write Python, call it from a cell
 
-- [x] M6 custom functions and `on_edit` hooks.
-
-### Python API
 ```python
 import adder
-ws = adder.sheet("Sheet1")            # or adder.active(), adder.sheet(0), adder.add_sheet("Out")
+
+@adder.function                        # now =MARGIN(B2, C2) works in any cell
+def margin(revenue, cost):
+    return round((revenue - cost) / revenue, 3)
+
+@adder.on_edit("Sheet1!B:B")           # react to edits in column B
+def stamp(event):
+    event.range.offset(cols=1).value = f"changed to {event.value}"
+
+ws = adder.active()
+df = ws.range("A1:C100").to_pandas(header=True)
+ws.range("F1").from_pandas(df.groupby("Region").sum().reset_index())
+```
+
+- **Custom functions:** decorate a Python function and call it from any formula. It recalculates when its inputs change, just like `SUM`.
+- **Edit hooks:** run Python whenever the user edits a range.
+- **Ranges ↔ pandas:** read a range into a DataFrame and write one back in a single line.
+- **Fast round-trips:** reads are synchronous and writes are batched. Writing 10k cells one at a time takes about 35 ms.
+- **Interruptible:** Stop sends a `KeyboardInterrupt`. If the script still won't stop, the worker is restarted.
+
+## A real spreadsheet underneath
+
+- **Formulas:** Excel-compatible functions, recalculation and multiple sheets, powered by [IronCalc](https://github.com/ironcalc/IronCalc) compiled to WebAssembly.
+- **Speed at scale:** the grid is drawn on a canvas with virtual scrolling. It holds 60 fps at 100,000 × 26 cells, with a median paint time of about 4 ms.
+- **Familiar editing:**
+  - Formula bar, and click-to-reference while typing a formula.
+  - Copy/paste that keeps formulas and works with other apps.
+  - Paste-to-fill and Ctrl+Enter fill.
+  - Undo/redo.
+  - Selecting, inserting and deleting whole rows and columns.
+  - Excel keyboard navigation.
+- **Files:** .xlsx import and export, and CSV with delimiter sniffing.
+- **Local-first:** workbooks autosave to IndexedDB.
+
+## Try it
+
+```sh
+npm install
+npm run dev          # http://localhost:5173
+```
+
+Open the **Python** panel, write a script and press **Ctrl+Enter**. Python loads on the first run. To see how the grid copes with a big sheet, open [`/?seed=100000`](http://localhost:5173/?seed=100000).
+
+```sh
+npm test             # unit tests (vitest)
+npm run e2e          # browser tests (playwright; needs: sudo npx playwright install-deps chromium)
+```
+
+## Python API
+
+```python
+ws = adder.sheet("Sheet1")             # or adder.active(), adder.sheet(0), adder.add_sheet("Out")
 ws["A1"].value = 42                    # strings starting with "=" are formulas
 vals = ws.range("A1:C100").values      # list[list]; errors come back as adder.CellError
 df = ws.range("A1:C100").to_pandas(header=True)
 ws.range("E1").from_pandas(df)
 adder.range("'My Sheet'!B:B").values   # whole columns are clipped to the used range
-```
-**Custom functions and hooks**
-```python
-@adder.function                        # =DOUBLE(A1) in any cell
-def double(x):
-    return x * 2
 
 @adder.function
-def total(rows):                       # range args arrive as list[list]
+def total(rows):                       # range arguments arrive as list[list]
     return sum(v for r in rows for v in r if isinstance(v, (int, float)))
 
-@adder.on_edit("Sheet1!B:B")           # after user edits that touch column B
-def log_change(event):                 # event.sheet, event.range, event.values, event.value
-    event.range.offset(cols=1).value = f"changed to {event.value}"
+@adder.on_edit("Sheet1!B:B")           # event.sheet, event.range, event.values, event.value
+def on_b(event): ...
 ```
-- Running the script (re)registers its functions and hooks.
-- **Cell values:** a cell shows `#CALC!` while its result is pending and `#VALUE!` if the function raised; the traceback goes to the console.
-- **After a reload:** cells keep their last results. If the inputs change before the script runs again, the cell shows `#NAME?`.
-- **Implementation:** IronCalc has no custom-function hook (`src/python/customfns.ts`), so each call site gets a row on a hidden `__adder` sheet:
-  - Argument "mirror" cells let IronCalc track dependencies.
-  - We diff the mirror values after each change and call Python only when the arguments changed.
-  - The result is written back through IronCalc's external-diff API, so it never enters undo history.
-  - The formula bar and xlsx export show the original formula text, rebuilt from the stored formula and the argument mirrors. IronCalc updates both when rows or columns move, so custom-function cells survive inserts and undo.
 
-**How it works:**
-- Writes are buffered in Python, grouped into rectangles, and sent as one batch per rectangle, each of which is a single undo step.
-- Reads are synchronous. The worker blocks on `Atomics.wait` while the main thread answers over a SharedArrayBuffer (`src/python/channel.ts`), which is why the app needs COOP/COEP headers.
-- **Stop:** first raises `KeyboardInterrupt`. If the script hasn't stopped after 1.5s, the worker is terminated and Python restarts on the next run.
-- **Speed:** writing 10k cells one at a time takes about 35ms in Python, and the whole run about 90ms, once Python is warm.
+Running a script registers its functions and hooks again. While a custom function's result is pending, its cell shows `#CALC!`. If the function raises, the cell shows `#VALUE!` and the traceback goes to the console.
 
-### xlsx caveat
-The published `@ironcalc/wasm` doesn't include IronCalc's xlsx reader/writer; those sit behind an unreleased `xlsx` cargo feature. Until it ships, Adder uses SheetJS Community Edition:
-- **Round-trips:** values, formulas, number formats, column widths, sheet names and hidden sheets.
-- **Import only:** solid fills.
-- **Lost on export:** fonts, fills, borders and alignment, because SheetJS CE can't write styles.
+## How it works
 
-To switch over, implement `XlsxCodec` with `Model.fromXlsx` / `toXlsx`.
+```
+React chrome + canvas grid
+        │
+Engine adapter (TypeScript) ←→ IronCalc (WASM)     single source of truth for cells
+        │  SharedArrayBuffer + Atomics
+Pyodide in a Web Worker ── the `adder` module
+```
 
-## Performance
-Load `/?seed=100000` to fill 100k × 26 cells. In headless Chromium with software rendering, scrolling holds 60fps: about 4ms median paint and under 8ms at p95. `window.adderGrid.paintTimes` has the numbers in dev builds.
+- **Synchronous reads from a worker:** the Python worker blocks on `Atomics.wait` while the main thread answers over a SharedArrayBuffer (`src/python/channel.ts`). This is why the dev server sends COOP/COEP headers.
+- **Custom functions on an engine with no plugin hook:** each call site gets a row on a hidden `__adder` sheet.
+  - Argument "mirror" cells there let IronCalc track dependencies.
+  - Adder diffs the mirrors after each change and calls Python only when an argument changed.
+  - Results are written back outside the undo history.
+  - The original formula text is rebuilt for the formula bar and for export, so these cells survive inserts, undo and xlsx round-trips.
+- **Batched writes:** Python buffers its writes, groups them into rectangles and sends each rectangle as one engine call. Each rectangle is a single undo step.
+- **Used-range caching:** IronCalc's row scan is O(sheet), so the adapter keeps its own used range and grows it on each write.
 
-## Known limitations
-- **Python precision:** formula results reach Python with about 9 significant digits, because IronCalc has no raw-value API.
-- **Custom functions:**
-  - They must return a single value.
-  - Copying a custom-function cell copies a reference to the same result rather than a new call.
+Built with TypeScript, Vite, React (for the chrome only), IronCalc 0.8.4, Pyodide (Python 3.14), Monaco and SheetJS CE.
+
+## Limitations
+
+- **xlsx styles:** the published IronCalc WASM package doesn't include its xlsx reader/writer yet, so files go through SheetJS CE.
+  - Values, formulas, number formats, column widths and sheet names round-trip.
+  - Fonts, fills, borders and alignment are lost on export.
+  - Switching back is one `XlsxCodec` implementation away.
+- **Precision of formula results in Python:** about 9 significant digits, because IronCalc has no raw-value API. Literal inputs keep full precision.
+- **Custom function results:** they must be single values. Copying a custom-function cell copies a reference to the same result rather than making a new call.
 - **`on_edit` events:** they carry new values only, not old ones.
-- **Undo granularity:** each batched Python write is one undo step, so a script that writes several separate rectangles creates several steps.
-- **xlsx export:** see the SheetJS caveat above.
-
-## Engine notes
-- IronCalc's `getRowsWithData` scans the whole sheet on every call. The adapter therefore computes the used range from per-row `getColumnsWithData` lookups, caches it, and grows the cache on each write.
-- Batch writes (`Engine.setRange`) go through IronCalc's `pasteCsvText`, so they are a single undo step. Individual `setInput` calls are one undo step each.
-- IronCalc doesn't expose raw cell values. Formula results are read from their formatted text, which limits precision to about 9 significant digits. Literal number inputs keep full precision.
+- **Not planned for now:** real-time collaboration, charts and pivot tables.
