@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.png" alt="Adder" width="420" /></p>
+<p align="center"><img src="assets/logo-animated.gif" alt="Adder" width="420" /></p>
 
 <p align="center"><b>A spreadsheet that runs Python, entirely in your browser.</b></p>
 
