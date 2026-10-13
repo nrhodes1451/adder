@@ -1,4 +1,6 @@
+import { shiftFormula, tile } from "../engine/formula";
 import type { Engine, EngineClipboard, Range } from "../engine/types";
+import { parseCsv } from "../io/csv";
 import { MAX_COLS, MAX_ROWS } from "../engine/types";
 import { a1, Axis, type CellPos, type Selection, selectionBounds } from "./geometry";
 import { CellCache, COL_HEADER_HEIGHT, DARK, LIGHT, render, ROW_HEADER_WIDTH } from "./renderer";
@@ -7,6 +9,8 @@ const FONT = '13px Inter, system-ui, -apple-system, "Segoe UI", sans-serif';
 const MIN_ROWS = 1000;
 const MIN_COLS = 26;
 const RESIZE_HIT = 4;
+/** Largest area filled by a tiled paste or Ctrl+Enter, in cells. */
+const MAX_FILL = 200_000;
 
 /** Translates between what the user types/sees and what the engine stores (custom functions). */
 export interface FormulaAdapter {
@@ -222,11 +226,24 @@ export class Grid {
     this.positionEditor();
   }
 
-  commitEdit(move: [number, number] | null): void {
+  /**
+   * Commit the editor. With `fillSelection` (Ctrl+Enter) the value goes into
+   * every selected cell, formulas shifted relative to the edited cell.
+   */
+  commitEdit(move: [number, number] | null, fillSelection = false): void {
     if (!this.editing) return;
     const { row, col } = this.editing;
     const value = this.editor.value;
     this.closeEditor();
+    const sel = this.selectedRange;
+    if (fillSelection && sel.rows * sel.cols > 1 && sel.rows * sel.cols <= MAX_FILL) {
+      const block = Array.from({ length: sel.rows }, (_, i) =>
+        Array.from({ length: sel.cols }, (_, j) => shiftFormula(this.engine, value, sel.row + i - row, sel.col + j - col)),
+      );
+      this.writeBlock(sel.row, sel.col, block);
+      this.focus();
+      return;
+    }
     if (value !== this.inputAt(row, col)) {
       const input = this.formulas ? this.formulas.toEngine(this.sheet, row, col, value) : value;
       this.engine.setInput(this.sheet, row, col, input);
@@ -295,17 +312,32 @@ export class Grid {
     if (this.editing || !e.clipboardData) return;
     e.preventDefault();
     const text = e.clipboardData.getData("text/plain");
-    const { row, col } = this.active;
-    const target = { sheet: this.sheet, row, col, rows: 1, cols: 1 };
+    const sel = this.selectedRange;
+    const { row, col } = sel; // paste anchors at the selection's top-left
     const norm = (t: string) => t.replace(/\r\n?/g, "\n").replace(/\n$/, "");
+    const clip = this.clip && norm(text) === norm(this.clip.data.tsv) ? this.clip : null;
+
+    // A selection larger than what was copied is filled by repeating it (Excel semantics).
+    if (!clip?.cut && sel.rows * sel.cols <= MAX_FILL) {
+      const source = clip ? this.clipInputs(clip.data) : parseCsv(norm(text), "\t");
+      const [r1, c1] = clip ? clip.data.sourceRange : [row, col];
+      const bigger = sel.rows > source.length || sel.cols > Math.max(0, ...source.map((r) => r.length));
+      const filled = bigger ? tile(this.engine, source, sel, clip ? { dr: row - r1, dc: col - c1 } : null) : null;
+      if (filled) {
+        this.writeBlock(row, col, filled);
+        return;
+      }
+    }
+
     let rows: number;
     let cols: number;
-    if (this.clip && norm(text) === norm(this.clip.data.tsv)) {
+    const target = { sheet: this.sheet, row, col, rows: 1, cols: 1 };
+    if (clip) {
       // Our own copy: lossless paste with formulas adjusted and styles kept.
-      this.engine.paste(target, this.clip.data, this.clip.cut);
-      const [r1, c1, r2, c2] = this.clip.data.sourceRange;
+      this.engine.paste(target, clip.data, clip.cut);
+      const [r1, c1, r2, c2] = clip.data.sourceRange;
       [rows, cols] = [r2 - r1 + 1, c2 - c1 + 1];
-      if (this.clip.cut) this.clip = null;
+      if (clip.cut) this.clip = null;
     } else {
       const lines = norm(text).split("\n");
       this.engine.pasteText(target, text);
@@ -314,6 +346,29 @@ export class Grid {
     this.selection = { anchor: { row, col }, focus: { row: row + rows - 1, col: col + cols - 1 } };
     this.invalidate();
     this.emit({ type: "selection" });
+  }
+
+  /** Current inputs of a copied range, as the user would type them. */
+  private clipInputs(clip: EngineClipboard): string[][] {
+    const [r1, c1, r2, c2] = clip.sourceRange;
+    const out: string[][] = [];
+    for (let r = r1; r <= r2; r++) {
+      const row: string[] = [];
+      for (let c = c1; c <= c2; c++) {
+        const raw = this.engine.getInput(clip.sourceSheet, r, c);
+        row.push(this.formulas ? this.formulas.toUser(clip.sourceSheet, r, c, raw) : raw);
+      }
+      out.push(row);
+    }
+    return out;
+  }
+
+  /** Write user-typed inputs at (row, col) as one undo step; selection stays put. */
+  private writeBlock(row: number, col: number, inputs: string[][]): void {
+    const engineInputs = this.formulas
+      ? inputs.map((r, i) => r.map((v, j) => this.formulas!.toEngine(this.sheet, row + i, col + j, v)))
+      : inputs;
+    this.engine.setRange(this.sheet, row, col, engineInputs, "user");
   }
 
   // ---- input handlers
@@ -370,7 +425,9 @@ export class Grid {
   }
 
   private onEditorKey(e: KeyboardEvent): void {
-    if (e.key === "Enter" && !e.altKey) {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      this.commitEdit(null, true);
+    } else if (e.key === "Enter" && !e.altKey) {
       this.commitEdit([e.shiftKey ? -1 : 1, 0]);
     } else if (e.key === "Enter" && e.altKey) {
       const { selectionStart: a, selectionEnd: b, value } = this.editor;

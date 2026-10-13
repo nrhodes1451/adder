@@ -23,6 +23,10 @@ npm run e2e        # playwright (needs: sudo npx playwright install-deps chromiu
   - Copy, cut and paste: internal pastes keep formulas and styles; TSV from other apps also works.
   - Workbooks are saved to IndexedDB with debounced autosave, and you can open or create them from the toolbar.
 
+- Multi-cell editing:
+  - Pasting into a selection larger than what was copied repeats the copy across it (Excel semantics), shifting relative references.
+  - Ctrl+Enter, in the cell editor or the formula bar, writes the value to every selected cell.
+  - Either one is a single undo step.
 - [x] M4 files:
   - .xlsx import and export through SheetJS CE (`src/io/xlsx.ts`, behind `XlsxCodec`).
   - CSV import goes into a new sheet, with RFC 4180 parsing and delimiter sniffing.

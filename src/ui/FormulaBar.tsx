@@ -33,7 +33,9 @@ export function FormulaBar({ grid, engine }: { grid: Grid; engine: Engine }) {
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            grid.commitEdit([1, 0]);
+            // Ctrl+Enter fills the whole selection.
+            if (e.ctrlKey || e.metaKey) grid.commitEdit(null, true);
+            else grid.commitEdit([1, 0]);
           } else if (e.key === "Escape") {
             e.preventDefault();
             grid.cancelEdit();

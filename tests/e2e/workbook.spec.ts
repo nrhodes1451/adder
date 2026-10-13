@@ -101,3 +101,57 @@ test("create a second workbook and switch back", async ({ page }) => {
   await expect(formula(page)).toHaveValue("first");
   await page.screenshot({ path: "test-results/workbook.png" });
 });
+
+test("pasting one copied cell fills the whole selection, shifting formulas", async ({ page }) => {
+  await page.keyboard.type("1");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("=A1*10");
+  await page.keyboard.press("Enter");
+  await clickCell(page, 1, 2);
+  await clipboardEvent(page, "copy");
+  await clickCell(page, 2, 3);
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Shift+ArrowRight");
+  await clipboardEvent(page, "paste", "10");
+  await expect(nameBox(page)).toHaveValue("C2:D3"); // selection kept
+  await clickCell(page, 3, 4);
+  await expect(formula(page)).toHaveValue("=C3*10");
+
+  // External text fills too; one undo reverts the whole fill.
+  await clickCell(page, 5, 1);
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Shift+ArrowDown");
+  await clipboardEvent(page, "paste", "x\n");
+  await clickCell(page, 7, 1);
+  await expect(formula(page)).toHaveValue("x");
+  await page.keyboard.press("Control+z");
+  await expect(formula(page)).toHaveValue("");
+  await clickCell(page, 5, 1);
+  await expect(formula(page)).toHaveValue("");
+});
+
+test("ctrl+enter puts the typed value in every selected cell", async ({ page }) => {
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.keyboard.type("=ROW()*10");
+  await page.keyboard.press("Control+Enter");
+  await expect(nameBox(page)).toHaveValue("A1:B2");
+  await clickCell(page, 2, 2);
+  await expect(formula(page)).toHaveValue("=ROW()*10");
+
+  // Relative references shift from the edited cell.
+  await clickCell(page, 4, 3);
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.type("=A1");
+  await page.keyboard.press("Control+Enter");
+  await clickCell(page, 5, 3);
+  await expect(formula(page)).toHaveValue("=A2");
+
+  // Also from the formula bar.
+  await clickCell(page, 7, 1);
+  await page.keyboard.press("Shift+ArrowRight");
+  await formula(page).fill("same");
+  await formula(page).press("Control+Enter");
+  await clickCell(page, 7, 2);
+  await expect(formula(page)).toHaveValue("same");
+});
