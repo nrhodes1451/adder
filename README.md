@@ -66,6 +66,14 @@ npm test             # unit tests (vitest)
 npm run e2e          # browser tests (playwright; needs: sudo npx playwright install-deps chromium)
 ```
 
+## Deploy
+
+Adder is a static site. It needs two response headers: `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: credentialless`. Python only runs when the page is cross-origin isolated.
+
+- The `Dockerfile` builds the app and serves it with nginx. `deploy/nginx.conf` sets those headers and the cache policy, and redirects `www.` to the apex domain.
+- `npm run deploy` builds on Cloud Build and deploys to Cloud Run. It requires a clean git tree.
+- Set `PROJECT` and `REGION` to override the defaults, `adder-app-511522` and `europe-west1`.
+
 ## Python API
 
 ```python

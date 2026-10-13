@@ -3,6 +3,9 @@ import { App } from "./ui/App";
 import { Workbook } from "./ui/workbook";
 import "./ui/styles.css";
 
+// Workbooks live only in IndexedDB; ask the browser not to evict them.
+navigator.storage?.persist?.().catch(() => {});
+
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get("seed") ?? 0);
 const workbook = seed > 0 ? await seeded(seed) : await Workbook.openLast();
