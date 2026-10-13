@@ -96,6 +96,8 @@ export interface Engine {
   /** Clear contents; only the part of `range` that holds data is touched. */
   clearRange(range: Range, source?: ChangeSource): void;
   usedRange(sheet: number): { rows: number; cols: number };
+  /** Columns in `row` that hold content, ascending. Cheap for empty rows. */
+  contentColumns(sheet: number, row: number): number[];
 
   // structure (formulas referencing moved cells are adjusted by the engine)
   insertRows(sheet: number, row: number, count: number): void;

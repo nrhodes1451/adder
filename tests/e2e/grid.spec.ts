@@ -137,6 +137,21 @@ test("ctrl+a then delete clears everything without hanging", async ({ page }) =>
   await expect(formula(page)).toHaveValue("=A1+1");
 });
 
+test("ctrl+a then delete with a stray cell in the last row stays fast", async ({ page }) => {
+  await typeCell(page, "keep me?");
+  await page.keyboard.press("Control+ArrowDown"); // row 1,048,576
+  await page.keyboard.type("stray");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Control+a");
+  const t = Date.now();
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("Control+Home");
+  await expect(formula(page)).toHaveValue("");
+  expect(Date.now() - t).toBeLessThan(3000);
+  await page.keyboard.press("Control+z");
+  await expect(formula(page)).toHaveValue("keep me?");
+});
+
 test("ctrl+minus deletes selected rows/columns, row header click + insert works", async ({ page }) => {
   for (const v of ["1", "2", "3", "=SUM(A1:A3)"]) await typeCell(page, v);
   // Row header click on row 2, then delete it.

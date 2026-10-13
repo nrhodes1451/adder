@@ -105,7 +105,7 @@ export const sheetjsCodec: XlsxCodec = {
       const ws: XLSX.WorkSheet = {};
       const used = engine.usedRange(sheet.index);
       for (let row = 1; row <= used.rows; row++) {
-        for (let col = 1; col <= used.cols; col++) {
+        for (const col of engine.contentColumns(sheet.index, row)) {
           const input = opts.formulaFor?.(sheet.index, row, col) ?? engine.getInput(sheet.index, row, col);
           if (input === "") continue;
           const value = engine.getValue(sheet.index, row, col);

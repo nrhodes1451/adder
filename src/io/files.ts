@@ -28,8 +28,8 @@ export function exportCsv(engine: Engine, sheet: number): string {
   const { rows, cols } = engine.usedRange(sheet);
   const out: string[][] = [];
   for (let r = 1; r <= rows; r++) {
-    const row: string[] = [];
-    for (let c = 1; c <= cols; c++) row.push(engine.getDisplay(sheet, r, c));
+    const row: string[] = Array<string>(cols).fill("");
+    for (const c of engine.contentColumns(sheet, r)) if (c <= cols) row[c - 1] = engine.getDisplay(sheet, r, c);
     out.push(row);
   }
   return toCsv(out);

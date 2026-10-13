@@ -261,9 +261,8 @@ export class CustomFunctions {
     for (const s of this.engine.sheets()) {
       if (s.name === SHADOW_SHEET) continue;
       const used = this.engine.usedRange(s.index);
-      if (used.rows * used.cols > 500_000) return; // too big to scan: treat all as live
       for (let r = 1; r <= used.rows; r++) {
-        for (let c = 1; c <= used.cols; c++) for (const n of shadowRows(this.engine.getInput(s.index, r, c))) referenced.add(n);
+        for (const c of this.engine.contentColumns(s.index, r)) for (const n of shadowRows(this.engine.getInput(s.index, r, c))) referenced.add(n);
       }
     }
     for (const row of rows) this.dead.add(row);
@@ -357,9 +356,8 @@ export class CustomFunctions {
     for (const s of this.engine.sheets()) {
       if (s.name === SHADOW_SHEET) continue;
       const used = this.engine.usedRange(s.index);
-      if (used.rows * used.cols > 500_000) continue; // too big to scan; retype to adopt
       for (let r = 1; r <= used.rows; r++) {
-        for (let c = 1; c <= used.cols; c++) {
+        for (const c of this.engine.contentColumns(s.index, r)) {
           if (this.engine.getKind(s.index, r, c) !== "error") continue;
           const input = this.engine.getInput(s.index, r, c);
           if (!input.startsWith("=") || !pattern.test(input)) continue;

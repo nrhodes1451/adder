@@ -164,4 +164,33 @@ describe("IronCalcEngine", () => {
     e.setInput(0, 1_048_576, 1, "bottom");
     expect(() => e.insertRows(0, 1, 1)).toThrow(/last row \(row 1,048,576\) isn't empty/);
   });
+
+  it("clears a whole sheet with a stray last-row cell quickly, as one undo step, without bloating", () => {
+    const e = IronCalcEngine.create();
+    e.setRange(0, 1, 1, Array.from({ length: 1000 }, (_, i) => Array.from({ length: 5 }, (_, j) => String(i * j))));
+    e.setInput(0, 1_048_576, 2, "stray");
+    expect(e.usedRange(0)).toEqual({ rows: 1_048_576, cols: 5 });
+    const t = performance.now();
+    e.clearRange({ sheet: 0, row: 1, col: 1, rows: 1_048_576, cols: 16_384 });
+    expect(performance.now() - t).toBeLessThan(2000);
+    expect(e.getInput(0, 1_048_576, 2)).toBe("");
+    expect(e.usedRange(0)).toEqual({ rows: 0, cols: 0 }); // emptied cells don't count
+    e.undo(); // one Ctrl+Z restores both blocks
+    expect(e.getInput(0, 1_048_576, 2)).toBe("stray");
+    expect(e.getValue(0, 1000, 5)).toBe(999 * 4);
+    e.undo(); // ...and the next one undoes the stray input
+    expect(e.getInput(0, 1_048_576, 2)).toBe("");
+    e.redo();
+    e.redo();
+    expect(e.getInput(0, 1, 2)).toBe("");
+    expect(e.getInput(0, 1_048_576, 2)).toBe("");
+  });
+
+  it("adding a named sheet undoes in one step", () => {
+    const e = IronCalcEngine.create();
+    e.addSheet("Data");
+    e.undo();
+    expect(e.sheets().map((s) => s.name)).toEqual(["Sheet1"]);
+    expect(e.canUndo()).toBe(false);
+  });
 });

@@ -57,6 +57,13 @@ export class IronCalcEngine implements Engine {
   /** Mirror model used to produce diffs that are applied outside undo history. */
   private scratch: Model | null = null;
   private builtins = new Map<string, boolean>();
+  /**
+   * IronCalc undo steps per user-visible operation, so an operation made of
+   * several IronCalc calls (e.g. a sparse clear) undoes with one Ctrl+Z.
+   * Every history-creating IronCalc call here is exactly one step.
+   */
+  private undoSizes: number[] = [];
+  private redoSizes: number[] = [];
 
   private constructor(private model: Model) {}
 
@@ -116,23 +123,27 @@ export class IronCalcEngine implements Engine {
     this.model.newSheet();
     const index = this.sheets().length - 1;
     if (name) this.model.renameSheet(index, name);
+    this.recorded(name ? 2 : 1);
     this.emit({ kind: "sheets" });
     return index;
   }
 
   renameSheet(sheet: number, name: string): void {
     this.model.renameSheet(sheet, name);
+    this.recorded();
     this.emit({ kind: "sheets" });
   }
 
   deleteSheet(sheet: number): void {
     this.model.deleteSheet(sheet);
+    this.recorded();
     this.emit({ kind: "sheets" });
   }
 
   setSheetHidden(sheet: number, hidden: boolean): void {
     if (hidden) this.model.hideSheet(sheet);
     else this.model.unhideSheet(sheet);
+    this.recorded();
     this.emit({ kind: "sheets" });
   }
 
@@ -203,6 +214,7 @@ export class IronCalcEngine implements Engine {
 
   setInput(sheet: number, row: number, col: number, input: string, source: ChangeSource = "user"): void {
     this.model.setUserInput(sheet, row, col, input);
+    this.recorded();
     this.cells({ sheet, row, col, rows: 1, cols: 1 }, source);
   }
 
@@ -215,16 +227,59 @@ export class IronCalcEngine implements Engine {
     this.withSelection(sheet, row, col, () =>
       this.model.pasteCsvText({ sheet, row, column: col, width: cols, height: rows }, toTsv(grid)),
     );
+    this.recorded();
     this.cells({ sheet, row, col, rows, cols }, source);
   }
 
   clearRange(r: Range, source: ChangeSource = "user"): void {
-    // IronCalc visits every cell in the range (and aborts on whole-sheet
-    // ranges), so clip to the area that actually holds data.
+    // IronCalc visits (and leaves an empty cell at) every position in the
+    // range, and aborts on whole-sheet ranges. Clear only rows that hold
+    // content, in blocks of consecutive rows, as one undoable operation.
     const clipped = this.clipToUsed(r);
     if (!clipped) return;
-    this.model.rangeClearContents(clipped.sheet, clipped.row, clipped.col, clipped.row + clipped.rows - 1, clipped.col + clipped.cols - 1);
+    const c1 = clipped.col;
+    const c2 = clipped.col + clipped.cols - 1;
+    const blocks: [number, number, number, number][] = [];
+    let open: [number, number, number, number] | null = null;
+    const has = (row: number, c: number) => this.model.getCellContent(clipped.sheet, row, c) !== "";
+    for (let row = clipped.row; row < clipped.row + clipped.rows; row++) {
+      // Only the first and last occupied column matter; probe from both ends.
+      const cols = Array.from(this.model.getColumnsWithData(clipped.sheet, row))
+        .filter((c) => c >= c1 && c <= c2)
+        .sort((a, b) => a - b);
+      const lo = cols.find((c) => has(row, c));
+      if (lo === undefined) {
+        open = null;
+        continue;
+      }
+      const hi = cols.findLast((c) => has(row, c))!;
+      if (open) {
+        open[2] = row;
+        open[1] = Math.min(open[1], lo);
+        open[3] = Math.max(open[3], hi);
+      } else {
+        open = [row, lo, row, hi];
+        blocks.push(open);
+      }
+    }
+    for (const [r1, b1, r2, b2] of blocks) this.model.rangeClearContents(clipped.sheet, r1, b1, r2, b2);
+    if (!blocks.length) return;
+    this.recorded(blocks.length);
+    // Rescanning is slow (cleared cells linger in IronCalc), so only reset the
+    // cached extent when the clear covered all of it; otherwise it may overstate.
+    const u = this.used.get(clipped.sheet);
+    const coveredAll = u && clipped.row === 1 && clipped.col === 1 && clipped.rows >= u.rows && clipped.cols >= u.cols;
     this.cells(clipped, source);
+    if (coveredAll) this.used.set(clipped.sheet, { rows: 0, cols: 0 }); // after emit, which grows the cache
+  }
+
+  /** Columns in `row` holding content, ascending (IronCalc also reports emptied cells). */
+  contentColumns(sheet: number, row: number): number[] {
+    const cols = this.model.getColumnsWithData(sheet, row);
+    if (!cols.length) return [];
+    return Array.from(cols)
+      .filter((c) => this.model.getCellContent(sheet, row, c) !== "")
+      .sort((a, b) => a - b);
   }
 
   /** Intersection of `r` with the sheet's used range, or null if empty. */
@@ -244,8 +299,13 @@ export class IronCalcEngine implements Engine {
       for (let r = 1; r <= MAX_ROWS; r++) {
         const cols = this.model.getColumnsWithData(sheet, r);
         if (cols.length === 0) continue;
+        // Cells emptied by a clear still exist; only count ones with content.
+        let max = 0;
+        for (const c of cols) if (c > max && c > u.cols && this.model.getCellContent(sheet, r, c) !== "") max = c;
+        const hasContent = max > 0 || Array.from(cols).some((c) => this.model.getCellContent(sheet, r, c) !== "");
+        if (!hasContent) continue;
         u.rows = r;
-        for (const c of cols) if (c > u.cols) u.cols = c;
+        if (max > u.cols) u.cols = max;
       }
       this.used.set(sheet, u);
     }
@@ -256,6 +316,7 @@ export class IronCalcEngine implements Engine {
 
   insertRows(sheet: number, row: number, count: number): void {
     this.structural(() => this.model.insertRows(sheet, row, count), "row");
+    this.recorded();
     const u = this.used.get(sheet);
     if (u && row <= u.rows) u.rows = Math.min(MAX_ROWS, u.rows + count);
     this.emit({ kind: "all" });
@@ -263,6 +324,7 @@ export class IronCalcEngine implements Engine {
 
   insertCols(sheet: number, col: number, count: number): void {
     this.structural(() => this.model.insertColumns(sheet, col, count), "column");
+    this.recorded();
     const u = this.used.get(sheet);
     if (u && col <= u.cols) u.cols = Math.min(MAX_COLS, u.cols + count);
     this.emit({ kind: "all" });
@@ -271,12 +333,14 @@ export class IronCalcEngine implements Engine {
   deleteRows(sheet: number, row: number, count: number): void {
     // IronCalc only shifts rows that exist; clamp to the sheet.
     this.structural(() => this.model.deleteRows(sheet, row, Math.min(count, MAX_ROWS - row + 1)), "row");
+    this.recorded();
     this.used.delete(sheet);
     this.emit({ kind: "all" });
   }
 
   deleteCols(sheet: number, col: number, count: number): void {
     this.structural(() => this.model.deleteColumns(sheet, col, Math.min(count, MAX_COLS - col + 1)), "column");
+    this.recorded();
     this.used.delete(sheet);
     this.emit({ kind: "all" });
   }
@@ -307,6 +371,7 @@ export class IronCalcEngine implements Engine {
 
   setColWidth(sheet: number, col: number, width: number): void {
     this.model.setColumnsWidth(sheet, col, col, width);
+    this.recorded();
     this.emit({ kind: "all" });
   }
 
@@ -335,13 +400,25 @@ export class IronCalcEngine implements Engine {
   // ---- history
 
   undo(): void {
-    this.model.undo();
+    const steps = this.undoSizes.pop() ?? 1;
+    for (let i = 0; i < steps && this.model.canUndo(); i++) this.model.undo();
+    this.redoSizes.push(steps);
+    this.used.clear();
     this.emit({ kind: "all" });
   }
 
   redo(): void {
-    this.model.redo();
+    const steps = this.redoSizes.pop() ?? 1;
+    for (let i = 0; i < steps && this.model.canRedo(); i++) this.model.redo();
+    this.undoSizes.push(steps);
+    this.used.clear();
     this.emit({ kind: "all" });
+  }
+
+  /** Note that an operation added `steps` entries to IronCalc's history. */
+  private recorded(steps = 1): void {
+    this.undoSizes.push(steps);
+    this.redoSizes = [];
   }
 
   canUndo(): boolean {
@@ -368,6 +445,7 @@ export class IronCalcEngine implements Engine {
     this.withSelection(target.sheet, target.row, target.col, () =>
       this.model.pasteFromClipboard(clip.sourceSheet, clip.sourceRange, clip.native as never, cut),
     );
+    this.recorded();
     const [r1, c1, r2, c2] = clip.sourceRange;
     this.cells({ ...target, rows: r2 - r1 + 1, cols: c2 - c1 + 1 }, "user");
   }
@@ -382,6 +460,7 @@ export class IronCalcEngine implements Engine {
     this.withSelection(target.sheet, target.row, target.col, () =>
       this.model.pasteCsvText({ sheet: target.sheet, row: target.row, column: target.col, width: cols, height: rows }, body),
     );
+    this.recorded();
     this.cells({ ...target, rows, cols }, "user");
   }
 
