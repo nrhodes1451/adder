@@ -402,6 +402,17 @@ export class Grid {
 
   private onKey(e: KeyboardEvent): void {
     const mod = e.ctrlKey || e.metaKey;
+    if (isInsertShortcut(e)) {
+      // Cancel first: Ctrl+Shift+Plus is also Chrome's zoom-in, and a throw below
+      // must not let the browser act on it.
+      e.preventDefault();
+      try {
+        this.insertAtSelection();
+      } catch (err) {
+        console.error("Insert failed", err);
+      }
+      return;
+    }
     const page = Math.max(1, Math.floor((this.scroller.clientHeight - COL_HEADER_HEIGHT) / this.rows.defaultSize) - 1);
     const arrows: Record<string, [number, number, "up" | "down" | "left" | "right"]> = {
       ArrowUp: [-1, 0, "up"],
@@ -442,8 +453,6 @@ export class Grid {
       const b = selectionBounds(this.selection);
       if (mod) this.selectWhole("cols", b.c1, b.c2, this.active);
       else this.selectWhole("rows", b.r1, b.r2, this.active);
-    } else if (mod && (e.key === "+" || (e.shiftKey && (e.key === "=" || e.code === "Equal")))) {
-      this.insertAtSelection();
     } else if (mod && e.key.toLowerCase() === "a") {
       this.selection = { anchor: { row: 1, col: 1 }, focus: { row: this.rows.count, col: this.cols.count } };
       this.invalidate();
@@ -737,6 +746,17 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): H
   const e = document.createElement(tag);
   e.className = className;
   return e;
+}
+
+/**
+ * Insert rows/columns: Ctrl+Shift+Plus (Excel), Ctrl+numpad Plus, or Ctrl+Alt+=
+ * (Google Sheets' choice, which no browser uses for zoom). Matches on the key
+ * position as well as the character so other keyboard layouts work.
+ */
+function isInsertShortcut(e: KeyboardEvent): boolean {
+  if (!(e.ctrlKey || e.metaKey)) return false;
+  if (e.key === "+" || e.code === "NumpadAdd") return true;
+  return (e.shiftKey || e.altKey) && (e.code === "Equal" || e.key === "=");
 }
 
 function clamp(n: number, lo: number, hi: number): number {

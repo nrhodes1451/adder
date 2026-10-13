@@ -29,7 +29,7 @@ npm run e2e        # playwright (needs: sudo npx playwright install-deps chromiu
   - Either one is a single undo step.
 - Row and column selection and insert:
   - Ctrl+Space selects the selected columns; Shift+Space selects the rows.
-  - Ctrl+Shift+Plus inserts that many rows or columns before a whole-row or whole-column selection.
+  - Ctrl+Shift+Plus (or Ctrl+Alt+=, which browsers never use for zoom) inserts that many rows or columns before a whole-row or whole-column selection.
 - [x] M4 files:
   - .xlsx import and export through SheetJS CE (`src/io/xlsx.ts`, behind `XlsxCodec`).
   - CSV import goes into a new sheet, with RFC 4180 parsing and delimiter sniffing.

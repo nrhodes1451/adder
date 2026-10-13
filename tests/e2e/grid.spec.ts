@@ -114,4 +114,12 @@ test("ctrl+shift+plus inserts rows or columns for a whole-row/column selection",
   await expect(formula(page)).toHaveValue("1");
   await page.keyboard.press("Control+Shift+Equal");
   await expect(formula(page)).toHaveValue("1");
+
+  // Ctrl+Alt+= is an alternative that browsers never use for zoom.
+  await page.keyboard.press("Shift+Space");
+  await page.keyboard.press("Control+Alt+Equal");
+  await page.keyboard.press("Control+Home");
+  await expect(formula(page)).toHaveValue("");
+  await page.keyboard.press("ArrowDown");
+  await expect(formula(page)).toHaveValue("1");
 });
