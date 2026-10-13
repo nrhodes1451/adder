@@ -31,6 +31,7 @@ export function App({ initial }: { initial: Workbook }) {
         status: (s) => consoleStore.setStatus(s),
         functions: (names) => customRef.current?.setRegistered(names),
         editHandlers: (refs) => (editRefs.current = refs),
+        transformInput: (s, r, c, input) => customRef.current?.toEngine(s, r, c, input) ?? input,
       }),
     [engine, consoleStore],
   );

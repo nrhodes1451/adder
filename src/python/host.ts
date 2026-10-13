@@ -8,6 +8,8 @@ export interface PythonHostEvents {
   status?(status: PyStatus): void;
   functions?(names: string[]): void;
   editHandlers?(refs: string[]): void;
+  /** Rewrite a cell input written by a script before it reaches the engine (custom functions). */
+  transformInput?(sheet: number, row: number, col: number, input: string): string;
 }
 
 export interface RunResult {

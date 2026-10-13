@@ -20,7 +20,16 @@ beforeAll(async () => {
   py.registerJsModule("_adder_bridge", {
     sync: (op: string, args: string) => JSON.stringify(query(engine, () => active, op, JSON.parse(args)) ?? null),
     post: (op: string, args: string) =>
-      apply(engine, { functions: (n) => events.functions.push(n), editHandlers: (r) => events.edits.push(r) }, op, JSON.parse(args)),
+      apply(
+        engine,
+        {
+          functions: (n) => events.functions.push(n),
+          editHandlers: (r) => events.edits.push(r),
+          transformInput: (_s, _r, _c, input) => input.replace(/MARGIN\(/g, "0+("),
+        },
+        op,
+        JSON.parse(args),
+      ),
   });
   py.FS.writeFile("/home/pyodide/adder.py", readFileSync(new URL("../src/python/adder.py", import.meta.url), "utf8"));
 }, 60_000);
@@ -156,6 +165,22 @@ def stamp(event):
 `);
     run(`import adder; adder._dispatch_edit("Sheet1!B:B", '{"sheet": "Sheet1", "sheetIndex": 0, "row": 3, "col": 2, "rows": 1, "cols": 1, "values": [[7]]}')`);
     expect(engine.getValue(0, 3, 3)).toBe("edited B3 -> 7");
+  });
+});
+
+describe("script-written formulas", () => {
+  it("pass through the input transform (custom functions)", () => {
+    engine = IronCalcEngine.create();
+    run(`
+import adder
+ws = adder.active()
+ws["A1"].value = 3
+ws["B1"].value = "=MARGIN(A1)*2"
+ws["C1"].value = "MARGIN( stays text"
+`);
+    expect(engine.getInput(0, 1, 2)).not.toContain("MARGIN"); // rewritten by the transform
+    expect(engine.getValue(0, 1, 2)).toBe(6);
+    expect(engine.getValue(0, 1, 3)).toBe("MARGIN( stays text");
   });
 });
 

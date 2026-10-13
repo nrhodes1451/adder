@@ -42,10 +42,14 @@ def total(rows):
 @adder.on_edit("Sheet1!B:B")
 def stamp(event):
     event.range.offset(cols=1).value = f"B changed to {event.value}"
+
+adder.active()["F1"].value = "=DOUBLE(21)"   # scripts can write custom formulas too
 `),
   );
   await page.getByRole("button", { name: "Run" }).click();
   await expect(page.getByTestId("console")).toContainText("✓ Done", { timeout: 120_000 });
+
+  await expect.poll(() => display(page, 1, 6)).toBe("42");
 
   await typeAt(page, 1, 1, "5");
   await typeAt(page, 2, 1, "=DOUBLE(A1)+1");

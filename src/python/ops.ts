@@ -35,9 +35,16 @@ export function query(e: Engine, activeSheet: () => number, op: string, a: Args)
 export function apply(e: Engine, events: PythonHostEvents, op: string, a: Args): void {
   const n = (k: string) => a[k] as number;
   switch (op) {
-    case "write":
-      e.setRange(n("sheet"), n("row"), n("col"), a.values as string[][], "script");
+    case "write": {
+      const [sheet, row, col] = [n("sheet"), n("row"), n("col")];
+      let values = a.values as string[][];
+      const t = events.transformInput;
+      // Only formulas can contain custom-function calls.
+      if (t && values.some((r) => r.some((v) => v.startsWith("="))))
+        values = values.map((r, i) => r.map((v, j) => (v.startsWith("=") ? t(sheet, row + i, col + j, v) : v)));
+      e.setRange(sheet, row, col, values, "script");
       break;
+    }
     case "clear":
       e.clearRange({ sheet: n("sheet"), row: n("row"), col: n("col"), rows: n("rows"), cols: n("cols") }, "script");
       break;
