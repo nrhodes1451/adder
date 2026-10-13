@@ -28,6 +28,28 @@ npm run e2e        # playwright (needs: sudo npx playwright install-deps chromiu
   - CSV import goes into a new sheet, with RFC 4180 parsing and delimiter sniffing.
   - CSV export writes the active sheet's displayed values.
 
+- [x] M5 Python:
+  - Pyodide 314.0.7 (Python 3.14) runs in a Web Worker and loads lazily from jsDelivr on the first run.
+  - Script panel with a Monaco editor, Run (Ctrl+Enter) and Stop, plus a console with cleaned-up tracebacks.
+  - The `adder` module reads and writes ranges and works with pandas DataFrames.
+  - numpy and pandas load on demand.
+
+### Python API
+```python
+import adder
+ws = adder.sheet("Sheet1")            # or adder.active(), adder.sheet(0), adder.add_sheet("Out")
+ws["A1"].value = 42                    # strings starting with "=" are formulas
+vals = ws.range("A1:C100").values      # list[list]; errors come back as adder.CellError
+df = ws.range("A1:C100").to_pandas(header=True)
+ws.range("E1").from_pandas(df)
+adder.range("'My Sheet'!B:B").values   # whole columns are clipped to the used range
+```
+**How it works:**
+- Writes are buffered in Python, grouped into rectangles, and sent as one batch per rectangle, each of which is a single undo step.
+- Reads are synchronous. The worker blocks on `Atomics.wait` while the main thread answers over a SharedArrayBuffer (`src/python/channel.ts`), which is why the app needs COOP/COEP headers.
+- **Stop:** first raises `KeyboardInterrupt`. If the script hasn't stopped after 1.5s, the worker is terminated and Python restarts on the next run.
+- **Speed:** writing 10k cells one at a time takes about 35ms in Python, and the whole run about 90ms, once Python is warm.
+
 ### xlsx caveat
 The published `@ironcalc/wasm` doesn't include IronCalc's xlsx reader/writer; those sit behind an unreleased `xlsx` cargo feature. Until it ships, Adder uses SheetJS Community Edition:
 - **Round-trips:** values, formulas, number formats, column widths, sheet names and hidden sheets.
