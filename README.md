@@ -17,6 +17,11 @@ npm run e2e        # playwright (needs: sudo npx playwright install-deps chromiu
 ## Status
 - [x] M1 spike: IronCalc loads, set/get cells, `=SUM`, batch writes, bytes round-trip.
 - [x] M2 grid: canvas viewport with virtual scrolling, selection, keyboard navigation (arrows, Ctrl+arrows, Page, Home/End, Enter/Tab cycling), an in-cell editor with click-to-reference, a formula bar, and column resizing.
+- [x] M3 workbook:
+  - Sheet tabs: add, rename (double-click), delete (right-click).
+  - Undo and redo.
+  - Copy, cut and paste: internal pastes keep formulas and styles; TSV from other apps also works.
+  - Workbooks are saved to IndexedDB with debounced autosave, and you can open or create them from the toolbar.
 
 ## Performance
 Load `/?seed=100000` to fill 100k × 26 cells. In headless Chromium with software rendering, scrolling holds 60fps: about 4ms median paint and under 8ms at p95. `window.adderGrid.paintTimes` has the numbers in dev builds.

@@ -309,11 +309,14 @@ export class IronCalcEngine implements Engine {
   }
 
   pasteText(target: Range, tsv: string): void {
-    const lines = tsv.replace(/\r?\n$/, "").split(/\r?\n/);
+    const body = tsv.replace(/\r\n?/g, "\n").replace(/\n$/, "");
+    if (body === "") return;
+    // Shape is only used to size the change event; IronCalc parses quoting itself.
+    const lines = body.split("\n");
     const rows = lines.length;
     const cols = Math.max(...lines.map((l) => l.split("\t").length));
     this.withSelection(target.sheet, target.row, target.col, () =>
-      this.model.pasteCsvText({ sheet: target.sheet, row: target.row, column: target.col, width: cols, height: rows }, tsv),
+      this.model.pasteCsvText({ sheet: target.sheet, row: target.row, column: target.col, width: cols, height: rows }, body),
     );
     this.cells({ ...target, rows, cols }, "user");
   }

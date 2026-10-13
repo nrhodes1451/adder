@@ -1,4 +1,4 @@
-import type { Engine, Range } from "../engine/types";
+import type { Engine, EngineClipboard, Range } from "../engine/types";
 import { MAX_COLS, MAX_ROWS } from "../engine/types";
 import { a1, Axis, type CellPos, type Selection, selectionBounds } from "./geometry";
 import { CellCache, COL_HEADER_HEIGHT, DARK, LIGHT, render, ROW_HEADER_WIDTH } from "./renderer";
@@ -30,6 +30,7 @@ export class Grid {
   private ctx: CanvasRenderingContext2D;
   private editor: HTMLTextAreaElement;
   private rowOverrides: [number, number][] = [];
+  private clip: { data: EngineClipboard; cut: boolean } | null = null;
   private editing: { row: number; col: number } | null = null;
   private dirty = false;
   private listeners = new Set<(e: GridEvent) => void>();
@@ -68,6 +69,9 @@ export class Grid {
     on(this.scroller, "mousedown", (e) => this.onMouseDown(e));
     on(this.scroller, "mousemove", (e) => this.onHover(e));
     on(this.scroller, "dblclick", (e) => this.onDblClick(e));
+    on(this.scroller, "copy", (e) => this.onCopy(e, false));
+    on(this.scroller, "cut", (e) => this.onCopy(e, true));
+    on(this.scroller, "paste", (e) => this.onPaste(e));
     on(this.editor, "keydown", (e) => this.onEditorKey(e));
     on(this.editor, "input", () => this.emit({ type: "edit", text: this.editor.value }));
     on(this.editor, "blur", () => {
@@ -261,6 +265,41 @@ export class Grid {
     this.emit({ type: "edit", text: this.editor.value });
   }
 
+  // ---- clipboard
+
+  private onCopy(e: ClipboardEvent, cut: boolean): void {
+    if (this.editing || !e.clipboardData) return;
+    const data = this.engine.copy(this.selectedRange);
+    e.clipboardData.setData("text/plain", data.tsv);
+    e.preventDefault();
+    this.clip = { data, cut };
+  }
+
+  private onPaste(e: ClipboardEvent): void {
+    if (this.editing || !e.clipboardData) return;
+    e.preventDefault();
+    const text = e.clipboardData.getData("text/plain");
+    const { row, col } = this.active;
+    const target = { sheet: this.sheet, row, col, rows: 1, cols: 1 };
+    const norm = (t: string) => t.replace(/\r\n?/g, "\n").replace(/\n$/, "");
+    let rows: number;
+    let cols: number;
+    if (this.clip && norm(text) === norm(this.clip.data.tsv)) {
+      // Our own copy: lossless paste with formulas adjusted and styles kept.
+      this.engine.paste(target, this.clip.data, this.clip.cut);
+      const [r1, c1, r2, c2] = this.clip.data.sourceRange;
+      [rows, cols] = [r2 - r1 + 1, c2 - c1 + 1];
+      if (this.clip.cut) this.clip = null;
+    } else {
+      const lines = norm(text).split("\n");
+      this.engine.pasteText(target, text);
+      [rows, cols] = [lines.length, Math.max(...lines.map((l) => l.split("\t").length))];
+    }
+    this.selection = { anchor: { row, col }, focus: { row: row + rows - 1, col: col + cols - 1 } };
+    this.invalidate();
+    this.emit({ type: "selection" });
+  }
+
   // ---- input handlers
 
   private onKey(e: KeyboardEvent): void {
@@ -296,6 +335,10 @@ export class Grid {
       this.startEdit();
     } else if (e.key === "Delete" || e.key === "Backspace") {
       this.engine.clearRange(this.selectedRange);
+    } else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
+      this.engine.redo();
+    } else if (mod && e.key.toLowerCase() === "z") {
+      this.engine.undo();
     } else if (mod && e.key.toLowerCase() === "a") {
       this.selection = { anchor: { row: 1, col: 1 }, focus: { row: this.rows.count, col: this.cols.count } };
       this.invalidate();

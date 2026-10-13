@@ -1,20 +1,23 @@
 import { createRoot } from "react-dom/client";
-import { createEngine } from "./engine";
 import { App } from "./ui/App";
+import { Workbook } from "./ui/workbook";
 import "./ui/styles.css";
 
-const engine = await createEngine();
+const params = new URLSearchParams(location.search);
+const seed = Number(params.get("seed") ?? 0);
+const workbook = seed > 0 ? await seeded(seed) : await Workbook.openLast();
 
-// Dev helper: ?seed=100000 fills N rows × 26 cols for performance testing.
-const seed = Number(new URLSearchParams(location.search).get("seed") ?? 0);
-if (seed > 0) {
+/** Dev helper: ?seed=100000 creates a workbook with N rows × 26 cols. */
+async function seeded(n: number): Promise<Workbook> {
+  const wb = await Workbook.create(`Seed ${n}`);
   const t = performance.now();
-  for (let start = 1; start <= seed; start += 10_000) {
-    const n = Math.min(10_000, seed - start + 1);
-    const block = Array.from({ length: n }, (_, i) => Array.from({ length: 26 }, (_, c) => (c === 0 ? `Row ${start + i}` : String((start + i) * c))));
-    engine.setRange(0, start, 1, block, "system");
+  for (let start = 1; start <= n; start += 10_000) {
+    const count = Math.min(10_000, n - start + 1);
+    const block = Array.from({ length: count }, (_, i) => Array.from({ length: 26 }, (_, c) => (c === 0 ? `Row ${start + i}` : String((start + i) * c))));
+    wb.engine.setRange(0, start, 1, block, "system");
   }
-  console.info(`seeded ${seed}×26 in ${Math.round(performance.now() - t)}ms`);
+  console.info(`seeded ${n}×26 in ${Math.round(performance.now() - t)}ms`);
+  return wb;
 }
 
-createRoot(document.getElementById("root")!).render(<App engine={engine} />);
+createRoot(document.getElementById("root")!).render(<App initial={workbook} />);
