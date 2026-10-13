@@ -22,6 +22,18 @@ export type CellValue = number | string | boolean | null | { error: string };
 
 export type CellKind = "empty" | "number" | "text" | "boolean" | "error";
 
+/** Engine-neutral subset of cell formatting the grid draws. */
+export interface CellStyle {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  color?: string;
+  fill?: string;
+  align?: "left" | "center" | "right";
+  wrap: boolean;
+}
+
 export type ChangeEvent =
   | { kind: "cells"; ranges: Range[]; source: ChangeSource }
   | { kind: "sheets" }
@@ -53,6 +65,7 @@ export interface Engine {
   getInput(sheet: number, row: number, col: number): string;
   getKind(sheet: number, row: number, col: number): CellKind;
   getValue(sheet: number, row: number, col: number): CellValue;
+  getStyle(sheet: number, row: number, col: number): CellStyle;
   getRangeValues(range: Range): CellValue[][];
   setInput(sheet: number, row: number, col: number, input: string, source?: ChangeSource): void;
   /** Batched write of raw inputs anchored at (sheet,row,col); one undo step. */

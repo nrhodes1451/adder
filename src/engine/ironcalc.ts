@@ -1,6 +1,7 @@
 import init, { Model } from "@ironcalc/wasm";
 import type {
   CellKind,
+  CellStyle,
   CellValue,
   ChangeEvent,
   ChangeSource,
@@ -49,6 +50,8 @@ function parseDisplayNumber(display: string): number | null {
 
 export class IronCalcEngine implements Engine {
   private listeners = new Set<(e: ChangeEvent) => void>();
+  /** Cached per-sheet used range; grows on writes, may overstate after deletes. */
+  private used = new Map<number, { rows: number; cols: number }>();
 
   private constructor(private model: Model) {}
 
@@ -75,6 +78,16 @@ export class IronCalcEngine implements Engine {
   }
 
   private emit(e: ChangeEvent): void {
+    if (e.kind === "sheets") this.used.clear();
+    if (e.kind === "cells") {
+      for (const r of e.ranges) {
+        const u = this.used.get(r.sheet);
+        if (u) {
+          u.rows = Math.max(u.rows, r.row + r.rows - 1);
+          u.cols = Math.max(u.cols, r.col + r.cols - 1);
+        }
+      }
+    }
     for (const l of this.listeners) l(e);
   }
 
@@ -156,6 +169,21 @@ export class IronCalcEngine implements Engine {
     }
   }
 
+  getStyle(sheet: number, row: number, col: number): CellStyle {
+    const { font, fill, alignment } = this.model.getCellStyle(sheet, row, col).style;
+    const h = alignment?.horizontal;
+    return {
+      bold: font.b,
+      italic: font.i,
+      underline: font.u,
+      strike: font.strike,
+      color: font.color === undefined ? undefined : this.model.resolveColor(font.color),
+      fill: fill.color === undefined ? undefined : this.model.resolveColor(fill.color),
+      align: h === "left" || h === "center" || h === "right" ? h : undefined,
+      wrap: alignment?.wrap_text ?? false,
+    };
+  }
+
   getRangeValues(r: Range): CellValue[][] {
     const out: CellValue[][] = [];
     for (let i = 0; i < r.rows; i++) {
@@ -189,15 +217,20 @@ export class IronCalcEngine implements Engine {
   }
 
   usedRange(sheet: number): { rows: number; cols: number } {
-    let rows = 0;
-    let cols = 0;
-    for (let c = 1; c <= MAX_COLS; c++) {
-      const withData = this.model.getRowsWithData(sheet, c);
-      if (withData.length === 0) continue;
-      cols = c;
-      for (const r of withData) if (r > rows) rows = r;
+    let u = this.used.get(sheet);
+    if (!u) {
+      // getColumnsWithData is a cheap per-row lookup; getRowsWithData scans the
+      // whole sheet, so scan rows rather than columns.
+      u = { rows: 0, cols: 0 };
+      for (let r = 1; r <= MAX_ROWS; r++) {
+        const cols = this.model.getColumnsWithData(sheet, r);
+        if (cols.length === 0) continue;
+        u.rows = r;
+        for (const c of cols) if (c > u.cols) u.cols = c;
+      }
+      this.used.set(sheet, u);
     }
-    return { rows, cols };
+    return { ...u };
   }
 
   // ---- geometry

@@ -1,0 +1,45 @@
+import { useEffect, useState } from "react";
+import type { Engine } from "../engine/types";
+import { a1, selectionBounds } from "../grid/geometry";
+import type { Grid } from "../grid/grid";
+
+export function FormulaBar({ grid, engine }: { grid: Grid; engine: Engine }) {
+  const [, force] = useState(0);
+  const [editText, setEditText] = useState<string | null>(null);
+
+  useEffect(() => {
+    const offGrid = grid.on((e) => (e.type === "edit" ? setEditText(e.text) : force((n) => n + 1)));
+    const offEngine = engine.onChange(() => force((n) => n + 1));
+    return () => {
+      offGrid();
+      offEngine();
+    };
+  }, [grid, engine]);
+
+  const { row, col } = grid.active;
+  const b = selectionBounds(grid.selection);
+  const name = b.r1 === b.r2 && b.c1 === b.c2 ? a1(row, col) : `${a1(b.r1, b.c1)}:${a1(b.r2, b.c2)}`;
+  const value = editText ?? engine.getInput(grid.sheet, row, col);
+
+  return (
+    <div className="formula-bar" data-formula-bar>
+      <input className="name-box" aria-label="Cell reference" value={name} readOnly />
+      <span className="fx">fx</span>
+      <input
+        aria-label="Formula"
+        data-testid="formula-input"
+        value={value}
+        onChange={(e) => grid.setEditText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            grid.commitEdit([1, 0]);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            grid.cancelEdit();
+          }
+        }}
+      />
+    </div>
+  );
+}

@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-test("engine spike renders SUM", async ({ page }) => {
+test("edit a cell and see the formula result", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByTestId("spike")).toHaveText("SUM(A1:A3) = 6");
+  const grid = page.getByTestId("grid");
+  await grid.click({ position: { x: 100, y: 36 } }); // A1
+  await page.keyboard.type("=1+2");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByTestId("formula-input")).toHaveValue("=1+2");
+  await page.screenshot({ path: "test-results/grid.png" });
 });

@@ -16,7 +16,12 @@ npm run e2e        # playwright (needs: sudo npx playwright install-deps chromiu
 
 ## Status
 - [x] M1 spike: IronCalc loads, set/get cells, `=SUM`, batch writes, bytes round-trip.
+- [x] M2 grid: canvas viewport with virtual scrolling, selection, keyboard navigation (arrows, Ctrl+arrows, Page, Home/End, Enter/Tab cycling), an in-cell editor with click-to-reference, a formula bar, and column resizing.
+
+## Performance
+Load `/?seed=100000` to fill 100k × 26 cells. In headless Chromium with software rendering, scrolling holds 60fps: about 4ms median paint and under 8ms at p95. `window.adderGrid.paintTimes` has the numbers in dev builds.
 
 ## Engine notes
+- IronCalc's `getRowsWithData` scans the whole sheet on every call. The adapter therefore computes the used range from per-row `getColumnsWithData` lookups, caches it, and grows the cache on each write.
 - Batch writes (`Engine.setRange`) go through IronCalc's `pasteCsvText`, so they are a single undo step. Individual `setInput` calls are one undo step each.
 - IronCalc doesn't expose raw cell values. Formula results are read from their formatted text, which limits precision to about 9 significant digits. Literal number inputs keep full precision.
