@@ -1,7 +1,8 @@
-import { shiftFormula, tile } from "../engine/formula";
+import { closeParens, shiftFormula, tile } from "../engine/formula";
 import type { Engine, EngineClipboard, Range } from "../engine/types";
 import { parseCsv } from "../io/csv";
 import { MAX_COLS, MAX_ROWS } from "../engine/types";
+import { CompletionList } from "./completion";
 import { a1, Axis, type CellPos, type Selection, selectionBounds } from "./geometry";
 import { CellCache, COL_HEADER_HEIGHT, DARK, LIGHT, render, ROW_HEADER_WIDTH } from "./renderer";
 
@@ -16,9 +17,16 @@ const MAX_FILL = 200_000;
 export interface FormulaAdapter {
   toEngine(sheet: number, row: number, col: number, input: string): string;
   toUser(sheet: number, row: number, col: number, input: string): string;
+  /** Extra function names to offer in formula autocomplete (e.g. Python custom functions). */
+  functionNames?(): string[];
 }
 
-export type GridEvent = { type: "selection" } | { type: "edit"; text: string | null } | { type: "error"; message: string };
+export type GridEvent =
+  | { type: "selection" }
+  | { type: "edit"; text: string | null }
+  | { type: "error"; message: string }
+  /** The editor's caret moved programmatically (e.g. after autocomplete); the formula bar follows. */
+  | { type: "caret"; position: number };
 
 /**
  * Canvas spreadsheet grid. Owns scrolling, selection, keyboard and the in-cell
@@ -45,6 +53,9 @@ export class Grid {
   private rowOverrides: [number, number][] = [];
   private clip: { data: EngineClipboard; cut: boolean } | null = null;
   private editing: { row: number; col: number } | null = null;
+  private completion: CompletionList;
+  /** Span of the partial function name the completion would replace. */
+  private completing: { from: number; to: number } | null = null;
   private dirty = false;
   private listeners = new Set<(e: GridEvent) => void>();
   private disposers: (() => void)[] = [];
@@ -68,8 +79,9 @@ export class Grid {
     this.editor = el("textarea", "adder-grid-editor");
     this.editor.spellcheck = false;
     this.editor.hidden = true;
+    this.completion = new CompletionList((name) => this.acceptCompletion(name));
     this.scroller.append(this.canvas, this.spacer);
-    this.wrapper.append(this.scroller, this.editor);
+    this.wrapper.append(this.scroller, this.editor, this.completion.el);
     container.append(this.wrapper);
     this.ctx = this.canvas.getContext("2d")!;
 
@@ -86,7 +98,14 @@ export class Grid {
     on(this.scroller, "cut", (e) => this.onCopy(e, true));
     on(this.scroller, "paste", (e) => this.onPaste(e));
     on(this.editor, "keydown", (e) => this.onEditorKey(e));
-    on(this.editor, "input", () => this.emit({ type: "edit", text: this.editor.value }));
+    on(this.editor, "input", () => {
+      this.updateCompletion(this.editor.value, this.editor.selectionStart);
+      this.emit({ type: "edit", text: this.editor.value });
+    });
+    // Caret moves (clicks, Home/End, ←→) change what's being completed.
+    on(this.editor, "keyup", (e) => {
+      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) this.updateCompletion(this.editor.value, this.editor.selectionStart);
+    });
     on(this.editor, "blur", () => {
       // Clicking into the formula bar shouldn't drop the edit.
       if (this.editing && !this.wrapper.ownerDocument.activeElement?.closest("[data-formula-bar]")) this.commitEdit(null);
@@ -253,17 +272,82 @@ export class Grid {
       const end = this.editor.value.length;
       this.editor.setSelectionRange(end, end);
     }
+    this.updateCompletion(this.editor.value, this.editor.value.length);
     this.emit({ type: "edit", text: this.editor.value });
   }
 
-  /** Set the editor text from outside (formula bar). */
-  setEditText(text: string): void {
+  /** Set the editor text from outside (formula bar); `cursor` is the caret there. */
+  setEditText(text: string, cursor = text.length): void {
     if (!this.editing) {
       this.startEdit(text, false);
+    } else {
+      this.editor.value = text;
+      this.positionEditor();
+    }
+    this.editor.setSelectionRange(cursor, cursor);
+    this.updateCompletion(text, cursor);
+    this.emit({ type: "edit", text });
+  }
+
+  // ---- formula autocomplete
+
+  private functionNames(): string[] {
+    const custom = this.formulas?.functionNames?.() ?? [];
+    return [...new Set([...this.engine.builtinFunctions(), ...custom.map((n) => n.toUpperCase())])].sort();
+  }
+
+  private updateCompletion(text: string, cursor: number): void {
+    const at = this.editing ? this.engine.functionCompletion(this.sheet, this.editing.row, this.editing.col, text, cursor) : null;
+    const prefix = at?.prefix.toUpperCase() ?? "";
+    const names = at ? this.functionNames().filter((n) => n.startsWith(prefix)) : [];
+    // Nothing to offer, or the name is already typed in full.
+    if (!at || !names.length || (names.length === 1 && names[0] === prefix)) {
+      this.completing = null;
+      this.completion.hide();
       return;
     }
-    this.editor.value = text;
+    this.completing = { from: at.from, to: cursor };
+    this.completion.show(names);
+    this.positionCompletion();
+  }
+
+  private positionCompletion(): void {
+    if (!this.completion.visible) return;
+    const top = this.editor.offsetTop;
+    this.completion.position(this.editor.offsetLeft, top, top + this.editor.offsetHeight, this.wrapper.clientHeight);
+  }
+
+  /** Replace the partial name with "NAME(" and put the caret after the parenthesis. */
+  private acceptCompletion(name: string): void {
+    if (!this.completing || !this.editing) return;
+    const v = this.editor.value;
+    const insert = `${name}(`;
+    // Don't double up an existing "(" right after the cursor.
+    const rest = v.slice(this.completing.to).replace(/^\(/, "");
+    this.editor.value = v.slice(0, this.completing.from) + insert + rest;
+    const caret = this.completing.from + insert.length;
+    this.editor.setSelectionRange(caret, caret);
+    this.completing = null;
+    this.completion.hide();
     this.positionEditor();
+    this.emit({ type: "edit", text: this.editor.value });
+    this.emit({ type: "caret", position: caret });
+  }
+
+  /**
+   * Autocomplete keys (↑ ↓ Tab Esc) while the list is open. Returns true if
+   * handled; used by the in-cell editor and the formula bar.
+   */
+  handleCompletionKey(e: { key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean; preventDefault(): void }): boolean {
+    if (!this.completion.visible || e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") this.completion.move(e.key === "ArrowDown" ? 1 : -1);
+    else if (e.key === "Tab" && !e.shiftKey) this.acceptCompletion(this.completion.current!);
+    else if (e.key === "Escape") {
+      this.completing = null;
+      this.completion.hide();
+    } else return false;
+    e.preventDefault();
+    return true;
   }
 
   /**
@@ -273,7 +357,7 @@ export class Grid {
   commitEdit(move: [number, number] | null, fillSelection = false): void {
     if (!this.editing) return;
     const { row, col } = this.editing;
-    const value = this.editor.value;
+    const value = closeParens(this.editor.value); // "=AVERAGE(A1" -> "=AVERAGE(A1)"
     this.closeEditor();
     const sel = this.selectedRange;
     if (fillSelection && sel.rows * sel.cols > 1 && sel.rows * sel.cols <= MAX_FILL) {
@@ -301,6 +385,8 @@ export class Grid {
   private closeEditor(): void {
     this.editing = null;
     this.editor.hidden = true;
+    this.completing = null;
+    this.completion.hide();
     this.emit({ type: "edit", text: null });
   }
 
@@ -318,6 +404,7 @@ export class Grid {
     // Grow to fit content.
     s.width = "0";
     s.width = `${Math.min(this.scroller.clientWidth - x, this.editor.scrollWidth + 8)}px`;
+    this.positionCompletion();
   }
 
   /** In a formula, a click at an operand position inserts a reference instead of committing. */
@@ -335,6 +422,8 @@ export class Grid {
     this.editor.value = v.slice(0, start) + ref + v.slice(this.editor.selectionEnd);
     this.editor.focus();
     this.editor.setSelectionRange(start + ref.length, start + ref.length);
+    this.completing = null;
+    this.completion.hide();
     this.emit({ type: "edit", text: this.editor.value });
   }
 
@@ -479,6 +568,7 @@ export class Grid {
   }
 
   private onEditorKey(e: KeyboardEvent): void {
+    if (this.handleCompletionKey(e)) return;
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       this.commitEdit(null, true);
     } else if (e.key === "Enter" && !e.altKey) {

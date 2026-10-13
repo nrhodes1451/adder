@@ -196,3 +196,44 @@ test("a refused insert explains why", async ({ page }) => {
   await page.keyboard.press("Control+Shift+Equal");
   await expect(page.getByTestId("notice")).toContainText("last row");
 });
+
+test("formula autocomplete: =aver → AVERAGE( → click A1 → Tab commits =AVERAGE(A1)", async ({ page }) => {
+  const list = page.getByTestId("formula-completion");
+  await typeCell(page, "4");
+  await page.getByTestId("grid").click({ position: { x: 64 + 90 + 45, y: 36 } }); // B1
+
+  await page.keyboard.type("=");
+  await expect(list).toBeVisible(); // everything on "="
+  await page.keyboard.type("aver");
+  await expect(list.getByRole("option")).toHaveText(["AVERAGE(", "AVERAGEA(", "AVERAGEIF(", "AVERAGEIFS("]);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowUp");
+  await expect(list.getByRole("option", { selected: true })).toHaveText("AVERAGE(");
+
+  await page.keyboard.press("Tab");
+  await expect(list).toBeHidden();
+  await expect(formula(page)).toHaveValue("=AVERAGE(");
+
+  await page.getByTestId("grid").click({ position: { x: 64 + 45, y: 36 } }); // A1 → reference
+  await expect(formula(page)).toHaveValue("=AVERAGE(A1");
+  await page.keyboard.press("Tab");
+  await expect(nameBox(page)).toHaveValue("C1");
+  await page.keyboard.press("ArrowLeft");
+  await expect(formula(page)).toHaveValue("=AVERAGE(A1)");
+
+  // Escape closes the list without cancelling the edit; typing in the formula bar completes too.
+  await page.keyboard.press("ArrowDown");
+  await formula(page).click();
+  await formula(page).pressSequentially("=1+ro");
+  await expect(list.getByRole("option").first()).toHaveText("ROMAN(");
+  await page.keyboard.press("Escape");
+  await expect(list).toBeHidden();
+  await expect(formula(page)).toHaveValue("=1+ro");
+  await page.keyboard.type("und");
+  await page.keyboard.press("Tab");
+  await expect(formula(page)).toHaveValue("=1+ROUND(");
+  await page.keyboard.type("2.6");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowUp");
+  await expect(formula(page)).toHaveValue("=1+ROUND(2.6)");
+});

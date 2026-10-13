@@ -1,4 +1,5 @@
 import init, { getTokens, Model } from "@ironcalc/wasm";
+import { BUILTIN_FUNCTIONS } from "./functions";
 import type {
   CellInput,
   CellKind,
@@ -528,6 +529,25 @@ export class IronCalcEngine implements Engine {
       }
       return { kind: "other", start, end };
     });
+  }
+
+  builtinFunctions(): readonly string[] {
+    return BUILTIN_FUNCTIONS;
+  }
+
+  functionCompletion(sheet: number, row: number, col: number, text: string, cursor: number): { prefix: string; from: number } | null {
+    if (!text.startsWith("=")) return null;
+    if (cursor === 1 && text.length >= 1 && /^=\s*$/.test(text.slice(0, cursor))) return { prefix: "", from: 1 };
+    try {
+      const ctx = this.model.getFormulaCompletion(sheet, row, col, text, cursor);
+      for (const e of ctx.expecting) {
+        // replace_from is relative to the formula body (after "=").
+        if (typeof e === "object" && "FunctionName" in e) return { prefix: e.FunctionName, from: ctx.replace_from + 1 };
+      }
+    } catch {
+      // half-typed formulas the parser can't make sense of: no suggestions
+    }
+    return null;
   }
 
   /** IronCalc upper-cases names it knows and leaves unknown ones as typed. */

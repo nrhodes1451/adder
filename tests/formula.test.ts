@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { beforeAll, describe, expect, it } from "vitest";
-import { shiftFormula, tile } from "../src/engine/formula";
+import { closeParens, shiftFormula, tile } from "../src/engine/formula";
 import { IronCalcEngine, loadIronCalc } from "../src/engine/ironcalc";
 
 const require = createRequire(import.meta.url);
@@ -35,5 +35,34 @@ describe("shiftFormula", () => {
       ["x", "y", "x", "y"],
     ]);
     expect(tile(e, [["x", "y"]], { rows: 2, cols: 3 }, null)).toBeNull();
+  });
+});
+
+describe("closeParens", () => {
+  it("closes what's open, ignoring strings", () => {
+    expect(closeParens("=AVERAGE(A1")).toBe("=AVERAGE(A1)");
+    expect(closeParens("=IF(A1>0,SUM(B1:B2")).toBe("=IF(A1>0,SUM(B1:B2))");
+    expect(closeParens('=CONCAT("(",A1')).toBe('=CONCAT("(",A1)');
+    expect(closeParens("=SUM(A1)")).toBe("=SUM(A1)");
+    expect(closeParens("not (a formula")).toBe("not (a formula");
+  });
+});
+
+describe("function completion", () => {
+  it("finds the partial name at the cursor", () => {
+    expect(e.functionCompletion(0, 1, 1, "=", 1)).toEqual({ prefix: "", from: 1 });
+    expect(e.functionCompletion(0, 1, 1, "=aver", 5)).toEqual({ prefix: "aver", from: 1 });
+    expect(e.functionCompletion(0, 1, 1, "=SUM(A1:B2)+av", 14)).toEqual({ prefix: "av", from: 12 });
+    expect(e.functionCompletion(0, 1, 1, "=AVERAGE(A1", 11)).toBeNull();
+    expect(e.functionCompletion(0, 1, 1, "hello", 5)).toBeNull();
+  });
+
+  it("lists the engine's built-in functions", () => {
+    const names = e.builtinFunctions();
+    expect(names).toContain("AVERAGE");
+    expect(names).toContain("XLOOKUP");
+    expect(names.filter((n) => n.startsWith("AVER"))).toEqual(["AVERAGE", "AVERAGEA", "AVERAGEIF", "AVERAGEIFS"]);
+    // spot-check that the generated list matches the installed engine
+    for (const n of names.slice(0, 40)) expect(e.isBuiltinFunction(n)).toBe(true);
   });
 });

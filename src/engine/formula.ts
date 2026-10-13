@@ -84,3 +84,16 @@ export function tile(
   }
   return out;
 }
+
+/** Append the closing parentheses a formula is missing (ignoring ones inside strings), like Excel on commit. */
+export function closeParens(input: string): string {
+  if (!input.startsWith("=")) return input;
+  let depth = 0;
+  let inString = false;
+  for (const ch of input) {
+    if (ch === '"') inString = !inString;
+    else if (!inString && ch === "(") depth++;
+    else if (!inString && ch === ")") depth = Math.max(0, depth - 1);
+  }
+  return depth > 0 && !inString ? input + ")".repeat(depth) : input;
+}

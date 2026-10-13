@@ -156,6 +156,11 @@ export class CustomFunctions {
     return [...this.registered];
   }
 
+  /** Registered Python functions, for formula autocomplete. */
+  functionNames(): string[] {
+    return this.names;
+  }
+
   /** Python (re)registered its functions: recompute their call sites and adopt #NAME? cells. */
   setRegistered(names: string[]): void {
     const usable = names.filter((n) => !this.engine.isBuiltinFunction(n));

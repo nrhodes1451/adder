@@ -132,6 +132,13 @@ export interface Engine {
   // formulas
   tokenize(formulaBody: string): FormulaToken[];
   isBuiltinFunction(name: string): boolean;
+  /** Names of all built-in functions. */
+  builtinFunctions(): readonly string[];
+  /**
+   * If the cursor in a formula being typed sits where a function name can go,
+   * the partial name and where it starts (offset into `text`); otherwise null.
+   */
+  functionCompletion(sheet: number, row: number, col: number, text: string, cursor: number): { prefix: string; from: number } | null;
 
   // persistence
   serialize(): Uint8Array;
