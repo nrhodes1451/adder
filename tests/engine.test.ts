@@ -135,4 +135,33 @@ describe("IronCalcEngine", () => {
     e.undo();
     expect(e.getInput(0, 2, 2)).toBe("=SUM(A1:A2)");
   });
+
+  it("clears and copies whole-sheet selections via the used range only", () => {
+    const e = IronCalcEngine.create();
+    e.setRange(0, 1, 1, [["a", "b"], ["c", "=A1"]]);
+    const all = { sheet: 0, row: 1, col: 1, rows: 1_048_576, cols: 16_384 };
+    expect(e.copy(all).tsv).toBe("a\tb\nc\ta");
+    const t = performance.now();
+    e.clearRange(all); // used to abort the WASM module
+    expect(performance.now() - t).toBeLessThan(500);
+    expect(e.getInput(0, 2, 2)).toBe("");
+    e.undo();
+    expect(e.getInput(0, 2, 2)).toBe("=A1");
+    e.clearRange({ sheet: 0, row: 50, col: 50, rows: 10, cols: 10 }); // nothing there: no-op
+  });
+
+  it("deletes rows/columns and explains refused inserts", () => {
+    const e = IronCalcEngine.create();
+    e.setRange(0, 1, 1, [["1"], ["2"], ["3"], ["=SUM(A1:A3)"]]);
+    e.deleteRows(0, 2, 1);
+    expect(e.getInput(0, 3, 1)).toBe("=SUM(A1:A2)");
+    expect(e.getValue(0, 3, 1)).toBe(4);
+    e.deleteCols(0, 1, 1);
+    expect(e.getInput(0, 3, 1)).toBe("");
+    e.undo();
+    e.undo();
+    expect(e.getValue(0, 4, 1)).toBe(6);
+    e.setInput(0, 1_048_576, 1, "bottom");
+    expect(() => e.insertRows(0, 1, 1)).toThrow(/last row \(row 1,048,576\) isn't empty/);
+  });
 });

@@ -18,7 +18,7 @@ export interface FormulaAdapter {
   toUser(sheet: number, row: number, col: number, input: string): string;
 }
 
-export type GridEvent = { type: "selection" } | { type: "edit"; text: string | null };
+export type GridEvent = { type: "selection" } | { type: "edit"; text: string | null } | { type: "error"; message: string };
 
 /**
  * Canvas spreadsheet grid. Owns scrolling, selection, keyboard and the in-cell
@@ -163,12 +163,25 @@ export class Grid {
     this.emit({ type: "selection" });
   }
 
-  /** Insert as many rows/columns as are selected, before the selection (Ctrl+Shift+Plus). */
-  private insertAtSelection(): void {
-    if (!this.whole) return;
+  /**
+   * Insert (before) or delete the selected whole rows/columns. Errors are
+   * reported as grid "error" events rather than thrown.
+   */
+  private structuralEdit(op: "insert" | "delete"): void {
     const b = selectionBounds(this.selection);
-    if (this.whole === "rows") this.engine.insertRows(this.sheet, b.r1, b.r2 - b.r1 + 1);
-    else this.engine.insertCols(this.sheet, b.c1, b.c2 - b.c1 + 1);
+    try {
+      if (this.whole === "rows") {
+        const n = b.r2 - b.r1 + 1;
+        if (op === "insert") this.engine.insertRows(this.sheet, b.r1, n);
+        else this.engine.deleteRows(this.sheet, b.r1, n);
+      } else if (this.whole === "cols") {
+        const n = b.c2 - b.c1 + 1;
+        if (op === "insert") this.engine.insertCols(this.sheet, b.c1, n);
+        else this.engine.deleteCols(this.sheet, b.c1, n);
+      }
+    } catch (err) {
+      this.emit({ type: "error", message: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   get active(): CellPos {
@@ -402,15 +415,13 @@ export class Grid {
 
   private onKey(e: KeyboardEvent): void {
     const mod = e.ctrlKey || e.metaKey;
-    if (isInsertShortcut(e)) {
-      // Cancel first: Ctrl+Shift+Plus is also Chrome's zoom-in, and a throw below
-      // must not let the browser act on it.
+    const structural = structuralShortcut(e);
+    if (structural) {
+      // These are also the browser's zoom keys: claim them only when whole
+      // rows/columns are selected, and cancel before acting.
+      if (!this.whole) return;
       e.preventDefault();
-      try {
-        this.insertAtSelection();
-      } catch (err) {
-        console.error("Insert failed", err);
-      }
+      this.structuralEdit(structural);
       return;
     }
     const page = Math.max(1, Math.floor((this.scroller.clientHeight - COL_HEADER_HEIGHT) / this.rows.defaultSize) - 1);
@@ -749,14 +760,17 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): H
 }
 
 /**
- * Insert rows/columns: Ctrl+Shift+Plus (Excel), Ctrl+numpad Plus, or Ctrl+Alt+=
- * (Google Sheets' choice, which no browser uses for zoom). Matches on the key
- * position as well as the character so other keyboard layouts work.
+ * Ctrl+Shift+Plus / Ctrl+numpad Plus / Ctrl+Alt+= insert; Ctrl+Minus /
+ * Ctrl+numpad Minus / Ctrl+Alt+- delete. The Ctrl+Alt forms are Google Sheets'
+ * choice and no browser uses them for zoom. Matches on key position as well as
+ * the character so other keyboard layouts work.
  */
-function isInsertShortcut(e: KeyboardEvent): boolean {
-  if (!(e.ctrlKey || e.metaKey)) return false;
-  if (e.key === "+" || e.code === "NumpadAdd") return true;
-  return (e.shiftKey || e.altKey) && (e.code === "Equal" || e.key === "=");
+function structuralShortcut(e: KeyboardEvent): "insert" | "delete" | null {
+  if (!(e.ctrlKey || e.metaKey)) return null;
+  if (e.key === "+" || e.code === "NumpadAdd") return "insert";
+  if ((e.shiftKey || e.altKey) && (e.code === "Equal" || e.key === "=")) return "insert";
+  if (e.key === "-" || e.code === "Minus" || e.code === "NumpadSubtract") return "delete";
+  return null;
 }
 
 function clamp(n: number, lo: number, hi: number): number {

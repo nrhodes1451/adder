@@ -83,3 +83,4 @@ select, input[type="text"] { font: inherit; color: inherit; background: var(--bg
 .console .entry.ok { color: var(--muted); }
 button.link { border: 0; background: none; color: var(--accent); padding: 0; font-size: 12px; }
 button.active { border-color: var(--accent); color: var(--accent); }
+.notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; background: color-mix(in srgb, var(--danger) 12%, var(--bg)); color: var(--danger); border-bottom: 1px solid var(--border); }

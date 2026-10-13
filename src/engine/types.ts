@@ -93,12 +93,15 @@ export interface Engine {
   setInput(sheet: number, row: number, col: number, input: string, source?: ChangeSource): void;
   /** Batched write of raw inputs anchored at (sheet,row,col); one undo step. */
   setRange(sheet: number, row: number, col: number, inputs: string[][], source?: ChangeSource): void;
+  /** Clear contents; only the part of `range` that holds data is touched. */
   clearRange(range: Range, source?: ChangeSource): void;
   usedRange(sheet: number): { rows: number; cols: number };
 
   // structure (formulas referencing moved cells are adjusted by the engine)
   insertRows(sheet: number, row: number, count: number): void;
   insertCols(sheet: number, col: number, count: number): void;
+  deleteRows(sheet: number, row: number, count: number): void;
+  deleteCols(sheet: number, col: number, count: number): void;
 
   // geometry
   rowHeight(sheet: number, row: number): number;

@@ -219,8 +219,20 @@ export class IronCalcEngine implements Engine {
   }
 
   clearRange(r: Range, source: ChangeSource = "user"): void {
-    this.model.rangeClearContents(r.sheet, r.row, r.col, r.row + r.rows - 1, r.col + r.cols - 1);
-    this.cells(r, source);
+    // IronCalc visits every cell in the range (and aborts on whole-sheet
+    // ranges), so clip to the area that actually holds data.
+    const clipped = this.clipToUsed(r);
+    if (!clipped) return;
+    this.model.rangeClearContents(clipped.sheet, clipped.row, clipped.col, clipped.row + clipped.rows - 1, clipped.col + clipped.cols - 1);
+    this.cells(clipped, source);
+  }
+
+  /** Intersection of `r` with the sheet's used range, or null if empty. */
+  private clipToUsed(r: Range): Range | null {
+    const used = this.usedRange(r.sheet);
+    const rows = Math.min(r.row + r.rows - 1, used.rows) - r.row + 1;
+    const cols = Math.min(r.col + r.cols - 1, used.cols) - r.col + 1;
+    return rows > 0 && cols > 0 ? { ...r, rows, cols } : null;
   }
 
   usedRange(sheet: number): { rows: number; cols: number } {
@@ -243,17 +255,44 @@ export class IronCalcEngine implements Engine {
   // ---- structure
 
   insertRows(sheet: number, row: number, count: number): void {
-    this.model.insertRows(sheet, row, count);
+    this.structural(() => this.model.insertRows(sheet, row, count), "row");
     const u = this.used.get(sheet);
     if (u && row <= u.rows) u.rows = Math.min(MAX_ROWS, u.rows + count);
     this.emit({ kind: "all" });
   }
 
   insertCols(sheet: number, col: number, count: number): void {
-    this.model.insertColumns(sheet, col, count);
+    this.structural(() => this.model.insertColumns(sheet, col, count), "column");
     const u = this.used.get(sheet);
     if (u && col <= u.cols) u.cols = Math.min(MAX_COLS, u.cols + count);
     this.emit({ kind: "all" });
+  }
+
+  deleteRows(sheet: number, row: number, count: number): void {
+    // IronCalc only shifts rows that exist; clamp to the sheet.
+    this.structural(() => this.model.deleteRows(sheet, row, Math.min(count, MAX_ROWS - row + 1)), "row");
+    this.used.delete(sheet);
+    this.emit({ kind: "all" });
+  }
+
+  deleteCols(sheet: number, col: number, count: number): void {
+    this.structural(() => this.model.deleteColumns(sheet, col, Math.min(count, MAX_COLS - col + 1)), "column");
+    this.used.delete(sheet);
+    this.emit({ kind: "all" });
+  }
+
+  /** Run a row/column operation, turning IronCalc's errors into readable ones. */
+  private structural(fn: () => void, what: "row" | "column"): void {
+    try {
+      fn();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/delete cells at the end/i.test(msg)) {
+        const last = what === "row" ? `row ${MAX_ROWS.toLocaleString("en-US")}` : "column XFD";
+        throw new Error(`Can't insert: the sheet's last ${what} (${last}) isn't empty. Clear it first.`);
+      }
+      throw new Error(msg);
+    }
   }
 
   // ---- geometry
@@ -315,7 +354,9 @@ export class IronCalcEngine implements Engine {
 
   // ---- clipboard
 
-  copy(r: Range): EngineClipboard {
+  copy(range: Range): EngineClipboard {
+    // Copying a whole-sheet selection only needs the cells with data.
+    const r = this.clipToUsed(range) ?? { ...range, rows: 1, cols: 1 };
     const clip = this.withSelection(r.sheet, r.row, r.col, () => {
       this.model.setSelectedRange(r.row, r.col, r.row + r.rows - 1, r.col + r.cols - 1);
       return this.model.copyToClipboard();

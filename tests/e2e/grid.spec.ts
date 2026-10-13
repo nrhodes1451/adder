@@ -123,3 +123,61 @@ test("ctrl+shift+plus inserts rows or columns for a whole-row/column selection",
   await page.keyboard.press("ArrowDown");
   await expect(formula(page)).toHaveValue("1");
 });
+
+test("ctrl+a then delete clears everything without hanging", async ({ page }) => {
+  await typeCell(page, "1");
+  await typeCell(page, "=A1+1");
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("Control+Home");
+  await expect(formula(page)).toHaveValue("");
+  await page.keyboard.press("ArrowDown");
+  await expect(formula(page)).toHaveValue("");
+  await page.keyboard.press("Control+z");
+  await expect(formula(page)).toHaveValue("=A1+1");
+});
+
+test("ctrl+minus deletes selected rows/columns, row header click + insert works", async ({ page }) => {
+  for (const v of ["1", "2", "3", "=SUM(A1:A3)"]) await typeCell(page, v);
+  // Row header click on row 2, then delete it.
+  await page.getByTestId("grid").click({ position: { x: 20, y: 24 + 25 + 12 } });
+  await expect(nameBox(page)).toHaveValue("2:2");
+  await page.keyboard.press("Control+Minus");
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("Control+ArrowDown"); // A1:A3 is one block now
+  await expect(nameBox(page)).toHaveValue("A3");
+  await expect(formula(page)).toHaveValue("=SUM(A1:A2)");
+
+  // Insert two rows above row 2 via header drag selection.
+  await page.getByTestId("grid").click({ position: { x: 20, y: 24 + 25 + 12 } });
+  await page.getByTestId("grid").click({ position: { x: 20, y: 24 + 50 + 12 }, modifiers: ["Shift"] });
+  await expect(nameBox(page)).toHaveValue("2:3");
+  await page.keyboard.press("Control+Shift+Equal");
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("Control+ArrowDown"); // skips the two new empty rows
+  await expect(nameBox(page)).toHaveValue("A4");
+  await page.keyboard.press("ArrowDown");
+  await expect(formula(page)).toHaveValue("=SUM(A1:A4)");
+
+  // Delete column A.
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("Control+Minus");
+  await page.keyboard.press("Control+Home");
+  await expect(formula(page)).toHaveValue("");
+
+  // A plain cell selection leaves Ctrl+Minus alone.
+  await page.keyboard.press("Control+z");
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("Control+Minus");
+  await expect(formula(page)).toHaveValue("1");
+});
+
+test("a refused insert explains why", async ({ page }) => {
+  await page.keyboard.press("Control+ArrowDown"); // jumps to row 1,048,576
+  await page.keyboard.type("bottom");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("Shift+Space");
+  await page.keyboard.press("Control+Shift+Equal");
+  await expect(page.getByTestId("notice")).toContainText("last row");
+});

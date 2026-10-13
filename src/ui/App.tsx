@@ -57,6 +57,15 @@ export function App({ initial }: { initial: Workbook }) {
     if (grid) grid.formulas = custom;
   }, [grid, custom]);
 
+  // Errors from grid operations (e.g. an insert IronCalc refuses) shown as a dismissible notice.
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => grid?.on((e) => e.type === "error" && setNotice(e.message)), [grid]);
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 8000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
   // on_edit hooks: forward user edits that intersect a registered ref.
   useEffect(
     () =>
@@ -127,6 +136,14 @@ export function App({ initial }: { initial: Workbook }) {
           Python
         </button>
       </Toolbar>
+      {notice && (
+        <div className="notice" role="alert" data-testid="notice">
+          <span>{notice}</span>
+          <button className="link" aria-label="Dismiss" onClick={() => setNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {grid && <FormulaBar grid={grid} engine={engine} />}
       <div className="main">
         <div className="sheet-area">

@@ -31,7 +31,11 @@ npm run e2e        # playwright (needs: sudo npx playwright install-deps chromiu
   - Either one is a single undo step.
 - Row and column selection and insert:
   - Ctrl+Space selects the selected columns; Shift+Space selects the rows.
-  - Ctrl+Shift+Plus (or Ctrl+Alt+=, which browsers never use for zoom) inserts that many rows or columns before a whole-row or whole-column selection.
+  - Ctrl+Shift+Plus (or Ctrl+Alt+=) inserts that many rows or columns before a whole-row or whole-column selection.
+  - Ctrl+Minus (or Ctrl+Alt+-) deletes the selected rows or columns.
+  - These are also the browser's zoom keys, so they only act (and block zoom) while whole rows or columns are selected.
+  - IronCalc refuses an insert when the sheet's last row or column has data; the app shows why.
+- Clearing or copying a huge selection (e.g. Ctrl+A) only touches cells that hold data.
 - [x] M4 files:
   - .xlsx import and export through SheetJS CE (`src/io/xlsx.ts`, behind `XlsxCodec`).
   - CSV import goes into a new sheet, with RFC 4180 parsing and delimiter sniffing.
