@@ -34,6 +34,8 @@ npm run e2e        # playwright (needs: sudo npx playwright install-deps chromiu
   - The `adder` module reads and writes ranges and works with pandas DataFrames.
   - numpy and pandas load on demand.
 
+- [x] M6 custom functions and `on_edit` hooks.
+
 ### Python API
 ```python
 import adder
@@ -44,6 +46,29 @@ df = ws.range("A1:C100").to_pandas(header=True)
 ws.range("E1").from_pandas(df)
 adder.range("'My Sheet'!B:B").values   # whole columns are clipped to the used range
 ```
+**Custom functions and hooks**
+```python
+@adder.function                        # =DOUBLE(A1) in any cell
+def double(x):
+    return x * 2
+
+@adder.function
+def total(rows):                       # range args arrive as list[list]
+    return sum(v for r in rows for v in r if isinstance(v, (int, float)))
+
+@adder.on_edit("Sheet1!B:B")           # after user edits that touch column B
+def log_change(event):                 # event.sheet, event.range, event.values, event.value
+    event.range.offset(cols=1).value = f"changed to {event.value}"
+```
+- Running the script (re)registers its functions and hooks.
+- **Cell values:** a cell shows `#CALC!` while its result is pending and `#VALUE!` if the function raised; the traceback goes to the console.
+- **After a reload:** cells keep their last results. If the inputs change before the script runs again, the cell shows `#NAME?`.
+- **Implementation:** IronCalc has no custom-function hook (`src/python/customfns.ts`), so each call site gets a row on a hidden `__adder` sheet:
+  - Argument "mirror" cells let IronCalc track dependencies.
+  - We diff the mirror values after each change and call Python only when the arguments changed.
+  - The result is written back through IronCalc's external-diff API, so it never enters undo history.
+  - The formula bar and xlsx export show the original formula text.
+
 **How it works:**
 - Writes are buffered in Python, grouped into rectangles, and sent as one batch per rectangle, each of which is a single undo step.
 - Reads are synchronous. The worker blocks on `Atomics.wait` while the main thread answers over a SharedArrayBuffer (`src/python/channel.ts`), which is why the app needs COOP/COEP headers.
@@ -60,6 +85,16 @@ To switch over, implement `XlsxCodec` with `Model.fromXlsx` / `toXlsx`.
 
 ## Performance
 Load `/?seed=100000` to fill 100k × 26 cells. In headless Chromium with software rendering, scrolling holds 60fps: about 4ms median paint and under 8ms at p95. `window.adderGrid.paintTimes` has the numbers in dev builds.
+
+## Known limitations
+- **Python precision:** formula results reach Python with about 9 significant digits, because IronCalc has no raw-value API.
+- **Custom functions:**
+  - They must return a single value.
+  - Copying a custom-function cell copies a reference to the same result rather than a new call.
+  - Inserting rows or columns isn't tracked by the shadow cells. (The UI doesn't offer row/column insert yet anyway.)
+- **`on_edit` events:** they carry new values only, not old ones.
+- **Undo granularity:** each batched Python write is one undo step, so a script that writes several separate rectangles creates several steps.
+- **xlsx export:** see the SheetJS caveat above.
 
 ## Engine notes
 - IronCalc's `getRowsWithData` scans the whole sheet on every call. The adapter therefore computes the used range from per-row `getColumnsWithData` lookups, caches it, and grows the cache on each write.

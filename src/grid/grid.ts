@@ -8,6 +8,12 @@ const MIN_ROWS = 1000;
 const MIN_COLS = 26;
 const RESIZE_HIT = 4;
 
+/** Translates between what the user types/sees and what the engine stores (custom functions). */
+export interface FormulaAdapter {
+  toEngine(sheet: number, row: number, col: number, input: string): string;
+  toUser(sheet: number, row: number, col: number, input: string): string;
+}
+
 export type GridEvent = { type: "selection" } | { type: "edit"; text: string | null };
 
 /**
@@ -16,6 +22,7 @@ export type GridEvent = { type: "selection" } | { type: "edit"; text: string | n
  */
 export class Grid {
   sheet = 0;
+  formulas: FormulaAdapter | null = null;
   private sel: Selection = { anchor: { row: 1, col: 1 }, focus: { row: 1, col: 1 } };
   /** Active cell when it differs from the anchor (Enter/Tab cycling inside a range). */
   private cursor: CellPos | null = null;
@@ -41,7 +48,7 @@ export class Grid {
 
   constructor(
     container: HTMLElement,
-    private engine: Engine,
+    readonly engine: Engine,
   ) {
     this.cache = new CellCache(engine);
 
@@ -142,6 +149,12 @@ export class Grid {
     return { sheet: this.sheet, row: b.r1, col: b.c1, rows: b.r2 - b.r1 + 1, cols: b.c2 - b.c1 + 1 };
   }
 
+  /** The cell's input as the user should see it. */
+  inputAt(row: number, col: number): string {
+    const raw = this.engine.getInput(this.sheet, row, col);
+    return this.formulas ? this.formulas.toUser(this.sheet, row, col, raw) : raw;
+  }
+
   get isEditing(): boolean {
     return this.editing !== null;
   }
@@ -188,7 +201,7 @@ export class Grid {
   startEdit(initial?: string, focusEditor = true): void {
     const { row, col } = this.active;
     this.editing = { row, col };
-    this.editor.value = initial ?? this.engine.getInput(this.sheet, row, col);
+    this.editor.value = initial ?? this.inputAt(row, col);
     this.editor.hidden = false;
     this.positionEditor();
     if (focusEditor) {
@@ -214,7 +227,10 @@ export class Grid {
     const { row, col } = this.editing;
     const value = this.editor.value;
     this.closeEditor();
-    if (value !== this.engine.getInput(this.sheet, row, col)) this.engine.setInput(this.sheet, row, col, value);
+    if (value !== this.inputAt(row, col)) {
+      const input = this.formulas ? this.formulas.toEngine(this.sheet, row, col, value) : value;
+      this.engine.setInput(this.sheet, row, col, input);
+    }
     if (move) this.advance(move[0], move[1]);
     this.focus();
   }

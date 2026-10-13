@@ -123,6 +123,42 @@ def log(event):
   });
 });
 
+describe("custom function and edit dispatch", () => {
+  it("invokes functions with values and ranges, converting results to inputs", () => {
+    engine = IronCalcEngine.create();
+    run(`
+import adder
+@adder.function
+def total(rows):
+    return sum(v for row in rows for v in row if isinstance(v, (int, float)))
+
+@adder.function(name="greet")
+def _greet(name):
+    return "=hi " + name
+
+@adder.function
+def pair():
+    return [1, 2]
+`);
+    expect(run(`import adder; adder._invoke("TOTAL", '[[[1, 2], [3, null]]]')`)).toBe("6");
+    expect(run(`import adder; adder._invoke("GREET", '["bob"]')`)).toBe("'=hi bob");
+    expect(() => run(`import adder; adder._invoke("PAIR", "[]")`)).toThrow(/single value/);
+    expect(() => run(`import adder; adder._invoke("NOPE", "[]")`)).toThrow(/isn't registered/);
+  });
+
+  it("dispatches edit events to matching handlers, which can write cells", () => {
+    engine = IronCalcEngine.create();
+    run(`
+import adder
+@adder.on_edit("Sheet1!B:B")
+def stamp(event):
+    event.range.offset(cols=1).value = f"edited {event.range.address} -> {event.value}"
+`);
+    run(`import adder; adder._dispatch_edit("Sheet1!B:B", '{"sheet": "Sheet1", "sheetIndex": 0, "row": 3, "col": 2, "rows": 1, "cols": 1, "values": [[7]]}')`);
+    expect(engine.getValue(0, 3, 3)).toBe("edited B3 -> 7");
+  });
+});
+
 describe("cleanTraceback", () => {
   it("drops pyodide internal frames", () => {
     const tb = [

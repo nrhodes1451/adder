@@ -42,6 +42,29 @@ export type ChangeEvent =
 /** Who caused a change: on_edit hooks only fire for "user" edits. */
 export type ChangeSource = "user" | "script" | "system";
 
+export interface CellInput {
+  sheet: number;
+  row: number;
+  col: number;
+  input: string;
+}
+
+/** Engine-neutral formula token, with character offsets into the formula body (no leading "="). */
+export interface FormulaToken {
+  kind: "ident" | "lparen" | "rparen" | "comma" | "ref" | "range" | "other";
+  start: number;
+  end: number;
+  /** Identifier text for `ident`. */
+  text?: string;
+  /** Explicit sheet for `ref`/`range`, null when unqualified. */
+  sheet?: string | null;
+  /** Coordinates for `ref` (r1=r2, c1=c2) and `range`. */
+  r1?: number;
+  c1?: number;
+  r2?: number;
+  c2?: number;
+}
+
 export type Direction = "up" | "down" | "left" | "right";
 
 export interface EngineClipboard {
@@ -91,6 +114,15 @@ export interface Engine {
   copy(range: Range): EngineClipboard;
   paste(target: Range, clip: EngineClipboard, cut: boolean): void;
   pasteText(target: Range, tsv: string): void;
+
+  // system writes (computed results, hidden bookkeeping) that bypass undo history
+  setSystemInputs(cells: CellInput[]): void;
+  /** Index of the sheet with this name, creating it outside undo history if needed. */
+  ensureSheet(name: string, hidden: boolean): number;
+
+  // formulas
+  tokenize(formulaBody: string): FormulaToken[];
+  isBuiltinFunction(name: string): boolean;
 
   // persistence
   serialize(): Uint8Array;

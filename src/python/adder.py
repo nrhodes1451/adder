@@ -32,6 +32,7 @@ __all__ = [
     "CellError",
     "function",
     "on_edit",
+    "EditEvent",
     "flush",
 ]
 
@@ -416,14 +417,18 @@ def range(ref: str) -> Range:  # noqa: A001 - mirrors the spreadsheet vocabulary
     return (sheet(name) if name else active()).range(addr)
 
 
-# ---------------------------------------------------------------- hooks (wired in M6)
+# ---------------------------------------------------------------- hooks
 
 _functions: dict[str, Callable[..., Any]] = {}
 _edit_handlers: list[tuple[str, Callable[..., Any]]] = []
 
 
 def function(fn: Callable[..., Any] | None = None, *, name: str | None = None):
-    """Register a custom function callable from cells, e.g. ``=DOUBLE(A1)``."""
+    """Register a custom function callable from cells, e.g. ``=DOUBLE(A1)``.
+
+    Range arguments arrive as lists of lists; single cells as plain values.
+    Return a scalar (number, string, bool or None).
+    """
 
     def register(f: Callable[..., Any]) -> Callable[..., Any]:
         _functions[(name or f.__name__).upper()] = f
@@ -433,17 +438,80 @@ def function(fn: Callable[..., Any] | None = None, *, name: str | None = None):
     return register(fn) if fn else register
 
 
+class EditEvent:
+    """Passed to ``on_edit`` handlers."""
+
+    def __init__(self, data: dict[str, Any]):
+        self.sheet = Sheet(data["sheetIndex"], data["sheet"])
+        self.range = Range(self.sheet, data["row"], data["col"], data["rows"], data["cols"])
+        self.values = [[_from_json(v) for v in row] for row in data["values"]]
+
+    @property
+    def value(self) -> Any:
+        return self.values[0][0] if self.values and self.values[0] else None
+
+    def __repr__(self) -> str:
+        return f"<EditEvent {self.sheet.name}!{self.range.address}>"
+
+
 def on_edit(ref: str):
     """Run the decorated function after user edits intersecting ``ref`` (e.g. ``'Sheet1!B:B'``)."""
 
     def register(f: Callable[..., Any]) -> Callable[..., Any]:
         _edit_handlers.append((ref, f))
-        _post("edit_handlers", refs=[r for r, _ in _edit_handlers])
+        _post("edit_handlers", refs=sorted({r for r, _ in _edit_handlers}))
         return f
 
     return register
 
 
+def _result_input(v: Any) -> str:
+    """Custom function result -> cell input. Results are never formulas."""
+    if hasattr(v, "tolist"):
+        v = v.tolist()
+    if isinstance(v, (list, tuple)):
+        grid = _grid(v)
+        if len(grid) == 1 and len(grid[0]) == 1:
+            v = grid[0][0]
+        else:
+            raise TypeError("Custom functions must return a single value (array results aren't supported yet)")
+    if isinstance(v, CellError):
+        return str(v)
+    s = _to_input(v)
+    return "'" + s if isinstance(v, str) and s.startswith("=") else s
+
+
+def _invoke(name: str, args_json: str) -> str:
+    """Called by the worker to evaluate ``=NAME(...)``; returns the cell input."""
+    fn = _functions.get(name)
+    if fn is None:
+        raise NameError(f"{name} isn't registered")
+    args = [_from_json_arg(a) for a in json.loads(args_json)]
+    try:
+        return _result_input(fn(*args))
+    finally:
+        flush()
+
+
+def _from_json_arg(a: Any) -> Any:
+    if isinstance(a, list):
+        return [[_from_json(v) for v in row] for row in a]
+    return _from_json(a)
+
+
+def _dispatch_edit(ref: str, event_json: str) -> None:
+    """Called by the worker for a user edit intersecting ``ref``."""
+    event = EditEvent(json.loads(event_json))
+    try:
+        for r, handler in list(_edit_handlers):
+            if r == ref:
+                handler(event)
+    finally:
+        flush()
+
+
 def _reset_hooks() -> None:
     _functions.clear()
     _edit_handlers.clear()
+    _post("functions", names=[])
+    _post("edit_handlers", refs=[])

@@ -19,7 +19,7 @@ export function FormulaBar({ grid, engine }: { grid: Grid; engine: Engine }) {
   const { row, col } = grid.active;
   const b = selectionBounds(grid.selection);
   const name = b.r1 === b.r2 && b.c1 === b.c2 ? a1(row, col) : `${a1(b.r1, b.c1)}:${a1(b.r2, b.c2)}`;
-  const value = editText ?? engine.getInput(grid.sheet, row, col);
+  const value = editText ?? grid.inputAt(row, col);
 
   return (
     <div className="formula-bar" data-formula-bar>

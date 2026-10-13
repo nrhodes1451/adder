@@ -1,5 +1,6 @@
-import init, { Model } from "@ironcalc/wasm";
+import init, { getTokens, Model } from "@ironcalc/wasm";
 import type {
+  CellInput,
   CellKind,
   CellStyle,
   CellValue,
@@ -8,6 +9,7 @@ import type {
   Direction,
   Engine,
   EngineClipboard,
+  FormulaToken,
   Range,
   SheetInfo,
 } from "./types";
@@ -52,6 +54,9 @@ export class IronCalcEngine implements Engine {
   private listeners = new Set<(e: ChangeEvent) => void>();
   /** Cached per-sheet used range; grows on writes, may overstate after deletes. */
   private used = new Map<number, { rows: number; cols: number }>();
+  /** Mirror model used to produce diffs that are applied outside undo history. */
+  private scratch: Model | null = null;
+  private builtins = new Map<string, boolean>();
 
   private constructor(private model: Model) {}
 
@@ -78,6 +83,8 @@ export class IronCalcEngine implements Engine {
   }
 
   private emit(e: ChangeEvent): void {
+    // We don't use IronCalc's collaboration queue; drain it so it doesn't grow.
+    this.model.flushSendQueue();
     if (e.kind === "sheets") this.used.clear();
     if (e.kind === "cells") {
       for (const r of e.ranges) {
@@ -319,6 +326,86 @@ export class IronCalcEngine implements Engine {
       this.model.pasteCsvText({ sheet: target.sheet, row: target.row, column: target.col, width: cols, height: rows }, body),
     );
     this.cells({ ...target, rows, cols }, "user");
+  }
+
+  // ---- system writes
+
+  /**
+   * Apply changes without touching undo history: make them on a scratch model
+   * with the same sheet layout, then replay its diffs as "external" changes.
+   */
+  private external(fn: (m: Model) => void): void {
+    const sheets = this.model.getWorksheetsProperties();
+    const s = this.scratch;
+    const inSync = s && s.getWorksheetsProperties().map((p) => p.name).join("\0") === sheets.map((p) => p.name).join("\0");
+    if (!inSync) {
+      this.scratch?.free();
+      const m = new Model("scratch", LOCALE, "UTC", LANG);
+      sheets.forEach((p, i) => {
+        if (i > 0) m.newSheet();
+        m.renameSheet(i, p.name);
+      });
+      m.pauseEvaluation();
+      m.flushSendQueue();
+      this.scratch = m;
+    }
+    fn(this.scratch!);
+    this.model.applyExternalDiffs(this.scratch!.flushSendQueue());
+  }
+
+  setSystemInputs(cells: CellInput[]): void {
+    if (!cells.length) return;
+    this.external((m) => {
+      for (const c of cells) m.setUserInput(c.sheet, c.row, c.col, c.input);
+    });
+    this.emit({ kind: "cells", ranges: cells.map((c) => ({ sheet: c.sheet, row: c.row, col: c.col, rows: 1, cols: 1 })), source: "system" });
+  }
+
+  ensureSheet(name: string, hidden: boolean): number {
+    const existing = this.sheets().find((s) => s.name === name);
+    if (existing) return existing.index;
+    this.external((m) => {
+      m.newSheet();
+      const index = m.getWorksheetsProperties().length - 1;
+      m.renameSheet(index, name);
+      if (hidden) m.hideSheet(index);
+    });
+    this.emit({ kind: "sheets" });
+    return this.sheets().length - 1;
+  }
+
+  // ---- formulas
+
+  tokenize(body: string): FormulaToken[] {
+    return getTokens(body).map(({ token: t, start, end }): FormulaToken => {
+      if (t === "LeftParenthesis") return { kind: "lparen", start, end };
+      if (t === "RightParenthesis") return { kind: "rparen", start, end };
+      if (t === "Comma") return { kind: "comma", start, end };
+      if (typeof t === "object" && "Ident" in t) return { kind: "ident", start, end, text: t.Ident };
+      if (typeof t === "object" && "Reference" in t) {
+        const r = t.Reference as unknown as { sheet?: string | null; row: number; column: number };
+        return { kind: "ref", start, end, sheet: r.sheet ?? null, r1: r.row, c1: r.column, r2: r.row, c2: r.column };
+      }
+      if (typeof t === "object" && "Range" in t) {
+        const { sheet, left, right } = t.Range;
+        return { kind: "range", start, end, sheet: sheet ?? null, r1: left.row, c1: left.column, r2: right.row, c2: right.column };
+      }
+      return { kind: "other", start, end };
+    });
+  }
+
+  /** IronCalc upper-cases names it knows and leaves unknown ones as typed. */
+  isBuiltinFunction(name: string): boolean {
+    const key = name.toUpperCase();
+    let known = this.builtins.get(key);
+    if (known === undefined) {
+      const m = new Model("probe", LOCALE, "UTC", LANG);
+      m.setUserInput(0, 1, 1, `=${name.toLowerCase()}()`);
+      known = m.getCellContent(0, 1, 1).startsWith(`=${key}(`);
+      m.free();
+      this.builtins.set(key, known);
+    }
+    return known;
   }
 
   // ---- persistence

@@ -1,7 +1,7 @@
 import type { Engine } from "../engine/types";
 import { ChannelHost, createChannel } from "./channel";
 import { apply, query } from "./ops";
-import type { FromWorker, PyStatus, Stream, ToWorker } from "./protocol";
+import type { EditEvent, FromWorker, PyStatus, Stream, ToWorker } from "./protocol";
 
 export interface PythonHostEvents {
   output?(stream: Stream, text: string): void;
@@ -25,6 +25,7 @@ export class PythonHost {
   private interrupt: Uint8Array | null = null;
   private nextId = 1;
   private runs = new Map<number, { resolve: (r: RunResult) => void; started: number }>();
+  private calls = new Map<number, (r: { value?: string; error?: string }) => void>();
   status: PyStatus = "idle";
 
   constructor(
@@ -46,6 +47,20 @@ export class PythonHost {
     });
   }
 
+  /** Evaluate a registered custom function; resolves to the result cell's input. */
+  call(name: string, args: unknown[]): Promise<{ value?: string; error?: string }> {
+    const id = this.nextId++;
+    return new Promise((resolve) => {
+      this.calls.set(id, resolve);
+      this.send({ type: "call", id, name, args });
+    });
+  }
+
+  /** Notify on_edit handlers registered for `ref`. */
+  edit(ref: string, event: EditEvent): void {
+    if (this.worker) this.send({ type: "edit", id: this.nextId++, ref, event });
+  }
+
   /** Interrupt the running script; terminate the worker if it doesn't stop promptly. */
   stop(): void {
     if (!this.worker || !this.running) return;
@@ -61,6 +76,11 @@ export class PythonHost {
     this.worker = null;
     for (const [, r] of this.runs) r.resolve({ ok: false, error: reason, ms: performance.now() - r.started });
     this.runs.clear();
+    for (const [, resolve] of this.calls) resolve({ error: "Python was stopped" });
+    this.calls.clear();
+    // A fresh worker has nothing registered.
+    this.events.functions?.([]);
+    this.events.editHandlers?.([]);
     this.setStatus("idle");
   }
 
@@ -129,8 +149,12 @@ export class PythonHost {
           this.events.output?.("stderr", `adder: ${msg.op} failed: ${e instanceof Error ? e.message : String(e)}\n`);
         }
         break;
-      case "call-result":
+      case "call-result": {
+        const resolve = this.calls.get(msg.id);
+        this.calls.delete(msg.id);
+        resolve?.(msg.error ? { error: msg.error } : { value: msg.value as string });
         break;
+      }
     }
   }
 }

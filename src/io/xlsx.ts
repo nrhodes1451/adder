@@ -17,6 +17,8 @@ export interface XlsxCodec {
 export interface ExportOptions {
   /** Override the formula text written for a cell (used to restore custom-function formulas). */
   formulaFor?: (sheet: number, row: number, col: number) => string | undefined;
+  /** Leave out sheets (e.g. Adder's hidden bookkeeping sheet). */
+  skipSheet?: (name: string) => boolean;
 }
 
 // Fallback when SheetJS gives only a character width (it normally supplies wpx).
@@ -97,7 +99,9 @@ export const sheetjsCodec: XlsxCodec = {
 
   write(engine, opts = {}) {
     const wb = XLSX.utils.book_new();
+    let index = 0;
     for (const sheet of engine.sheets()) {
+      if (opts.skipSheet?.(sheet.name)) continue;
       const ws: XLSX.WorkSheet = {};
       const used = engine.usedRange(sheet.index);
       for (let row = 1; row <= used.rows; row++) {
@@ -131,8 +135,9 @@ export const sheetjsCodec: XlsxCodec = {
       if (sheet.hidden) {
         wb.Workbook ??= { Sheets: [] };
         wb.Workbook.Sheets ??= [];
-        wb.Workbook.Sheets[sheet.index] = { Hidden: 1 };
+        wb.Workbook.Sheets[index] = { Hidden: 1 };
       }
+      index++;
     }
     return XLSX.write(wb, { type: "array", bookType: "xlsx", compression: true }) as Uint8Array;
   },

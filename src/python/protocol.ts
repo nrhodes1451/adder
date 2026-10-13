@@ -23,7 +23,7 @@ export type FromWorker =
 
 export interface EditEvent {
   sheet: string;
-  range: string;
+  sheetIndex: number;
   row: number;
   col: number;
   rows: number;

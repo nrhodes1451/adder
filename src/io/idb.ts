@@ -1,3 +1,5 @@
+import type { CustomState } from "../python/customfns";
+
 // Workbook persistence in IndexedDB. Engine state is stored as IronCalc bytes;
 // Adder-specific state (scripts, custom-function bookkeeping) lives in `meta`.
 
@@ -8,8 +10,8 @@ export interface Script {
 
 export interface WorkbookMeta {
   scripts: Script[];
-  /** Original formula text for cells rewritten by custom functions (M6). */
-  customFormulas?: Record<string, string>;
+  /** Custom-function bookkeeping (see python/customfns.ts). */
+  custom?: CustomState;
 }
 
 export interface WorkbookRecord {

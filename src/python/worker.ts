@@ -6,7 +6,7 @@ import type { PyodideAPI } from "pyodide";
 import adderSource from "./adder.py?raw";
 import { ChannelClient } from "./channel";
 import { cleanTraceback } from "./traceback";
-import { type FromWorker, PYODIDE_INDEX, type Stream, type ToWorker } from "./protocol";
+import { type EditEvent, type FromWorker, PYODIDE_INDEX, type Stream, type ToWorker } from "./protocol";
 
 const post = (m: FromWorker) => self.postMessage(m);
 
@@ -61,6 +61,8 @@ async function run(id: number, code: string): Promise<void> {
     // adder imports pandas lazily, so the import scan can't see it.
     if (/\b(to|from)_pandas\b/.test(code)) await py.loadPackage("pandas", { messageCallback });
     if (interrupt) interrupt[0] = 0;
+    // The script is the source of truth for functions and hooks: re-register from scratch.
+    py.runPython("import adder; adder._reset_hooks()");
     await py.runPythonAsync(code, { globals, filename: "<script>" });
   } catch (e) {
     error = cleanTraceback(e instanceof Error ? e.message : String(e));
@@ -77,6 +79,33 @@ async function run(id: number, code: string): Promise<void> {
   post({ type: "status", status: "ready" });
 }
 
+async function call(id: number, name: string, args: unknown[]): Promise<void> {
+  const py = await boot();
+  try {
+    const adder = py.pyimport("adder");
+    const value = adder._invoke(name, JSON.stringify(args)) as string;
+    adder.destroy();
+    post({ type: "call-result", id, value });
+  } catch (e) {
+    post({ type: "call-result", id, error: cleanTraceback(e instanceof Error ? e.message : String(e)) });
+  } finally {
+    flushOutput();
+  }
+}
+
+async function edit(ref: string, event: EditEvent): Promise<void> {
+  const py = await boot();
+  try {
+    const adder = py.pyimport("adder");
+    adder._dispatch_edit(ref, JSON.stringify(event));
+    adder.destroy();
+  } catch (e) {
+    write("stderr", `on_edit(${JSON.stringify(ref)}) failed:\n${cleanTraceback(e instanceof Error ? e.message : String(e))}\n`);
+  } finally {
+    flushOutput();
+  }
+}
+
 self.onmessage = (e: MessageEvent<ToWorker>) => {
   const msg = e.data;
   switch (msg.type) {
@@ -88,8 +117,10 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       void run(msg.id, msg.code);
       break;
     case "call":
+      void call(msg.id, msg.name, msg.args);
+      break;
     case "edit":
-      // Wired up in M6.
+      void edit(msg.ref, msg.event);
       break;
   }
 };

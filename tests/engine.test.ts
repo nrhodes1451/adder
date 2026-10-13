@@ -89,4 +89,35 @@ describe("IronCalcEngine", () => {
     e.undo();
     expect(seen).toEqual(["user", "script", "all"]);
   });
+
+  it("system writes and hidden sheets stay out of undo history", () => {
+    const e = IronCalcEngine.create();
+    e.renameSheet(0, "Sheet3"); // the scratch model must not pick a clashing name
+    e.addSheet("Data");
+    const shadow = e.ensureSheet("__adder", true);
+    expect(e.ensureSheet("__adder", true)).toBe(shadow);
+    expect(e.sheets()[shadow]).toMatchObject({ name: "__adder", hidden: true });
+    e.setInput(0, 1, 1, "=__adder!$A$1*2");
+    e.setSystemInputs([{ sheet: shadow, row: 1, col: 1, input: "21" }]);
+    expect(e.getDisplay(0, 1, 1)).toBe("42");
+    e.setSystemInputs([{ sheet: shadow, row: 1, col: 1, input: "5" }]);
+    expect(e.getDisplay(0, 1, 1)).toBe("10");
+    e.undo(); // undoes the user's formula, not the system writes
+    expect(e.getInput(0, 1, 1)).toBe("");
+    expect(e.getDisplay(shadow, 1, 1)).toBe("5");
+    const e2 = IronCalcEngine.fromBytes(e.serialize());
+    expect(e2.getDisplay(shadow, 1, 1)).toBe("5");
+  });
+
+  it("tokenizes formulas and recognises builtins", () => {
+    const e = IronCalcEngine.create();
+    const t = e.tokenize("DOUBLE(A1, 'My Sheet'!B2:C3)");
+    expect(t.map((x) => x.kind)).toEqual(["ident", "lparen", "ref", "comma", "range", "rparen"]);
+    expect(t[4]).toMatchObject({ sheet: "My Sheet", r1: 2, c1: 2, r2: 3, c2: 3 });
+    expect(t[2]).toMatchObject({ sheet: null, r1: 1, c1: 1 });
+    expect(e.tokenize("A1:B2")[0]).toMatchObject({ kind: "range", sheet: null });
+    expect(e.isBuiltinFunction("sum")).toBe(true);
+    expect(e.isBuiltinFunction("TEXTJOIN")).toBe(true);
+    expect(e.isBuiltinFunction("double")).toBe(false);
+  });
 });
