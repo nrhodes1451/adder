@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" alt="Adder" width="420" /></p>
+
 # Adder
 
 A browser spreadsheet scripted in Python. See `brief.md` for goals.

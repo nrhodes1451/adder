@@ -32,7 +32,7 @@ body { background: var(--bg); color: var(--text); font: 13px var(--font); }
 .sheet-area { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 
 .toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--surface); }
-.toolbar .title { font-weight: 600; margin-right: 8px; }
+.toolbar .logo { width: 24px; height: 24px; margin-right: 6px; }
 .toolbar .spacer { flex: 1; }
 button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--accent); }

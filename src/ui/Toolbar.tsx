@@ -34,7 +34,7 @@ export function Toolbar({ workbook, onOpen, onNew, children }: Props) {
 
   return (
     <div className="toolbar">
-      <span className="title">Adder</span>
+      <img className="logo" src="/icon.png" alt="Adder" title="Adder" />
       <input
         type="text"
         aria-label="Workbook name"
