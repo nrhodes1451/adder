@@ -65,3 +65,4 @@ select, input[type="text"] { font: inherit; color: inherit; background: var(--bg
 .toolbar .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
 .toolbar .save-state { color: var(--muted); font-size: 12px; }
 .tabs .tab-error { color: var(--danger); align-self: center; margin-left: 8px; font-size: 12px; }
+.toolbar-error { color: var(--danger); font-size: 12px; }

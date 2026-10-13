@@ -23,6 +23,19 @@ npm run e2e        # playwright (needs: sudo npx playwright install-deps chromiu
   - Copy, cut and paste: internal pastes keep formulas and styles; TSV from other apps also works.
   - Workbooks are saved to IndexedDB with debounced autosave, and you can open or create them from the toolbar.
 
+- [x] M4 files:
+  - .xlsx import and export through SheetJS CE (`src/io/xlsx.ts`, behind `XlsxCodec`).
+  - CSV import goes into a new sheet, with RFC 4180 parsing and delimiter sniffing.
+  - CSV export writes the active sheet's displayed values.
+
+### xlsx caveat
+The published `@ironcalc/wasm` doesn't include IronCalc's xlsx reader/writer; those sit behind an unreleased `xlsx` cargo feature. Until it ships, Adder uses SheetJS Community Edition:
+- **Round-trips:** values, formulas, number formats, column widths, sheet names and hidden sheets.
+- **Import only:** solid fills.
+- **Lost on export:** fonts, fills, borders and alignment, because SheetJS CE can't write styles.
+
+To switch over, implement `XlsxCodec` with `Model.fromXlsx` / `toXlsx`.
+
 ## Performance
 Load `/?seed=100000` to fill 100k × 26 cells. In headless Chromium with software rendering, scrolling holds 60fps: about 4ms median paint and under 8ms at p95. `window.adderGrid.paintTimes` has the numbers in dev builds.
 

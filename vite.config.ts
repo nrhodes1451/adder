@@ -14,6 +14,7 @@ export default defineConfig({
   server: { headers: isolation },
   preview: { headers: isolation },
   worker: { format: "es" },
-  optimizeDeps: { exclude: ["@ironcalc/wasm"] },
+  // Pre-bundle lazily imported deps so their first use doesn't trigger a dev reload.
+  optimizeDeps: { exclude: ["@ironcalc/wasm"], include: ["xlsx"] },
   test: { include: ["tests/**/*.test.ts"], environment: "node" },
 });

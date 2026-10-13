@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Grid } from "../grid/grid";
+import { FileMenu } from "./FileMenu";
 import { FormulaBar } from "./FormulaBar";
 import { GridView } from "./GridView";
 import { SheetTabs } from "./SheetTabs";
@@ -46,7 +47,10 @@ export function App({ initial }: { initial: Workbook }) {
 
   return (
     <div className="app">
-      <Toolbar key={workbook.id} workbook={workbook} onOpen={(id) => void switchTo(Workbook.open(id))} onNew={() => void switchTo(Workbook.create())} />
+      <Toolbar key={workbook.id} workbook={workbook} onOpen={(id) => void switchTo(Workbook.open(id))} onNew={() => void switchTo(Workbook.create())}>
+        <span className="sep" />
+        <FileMenu workbook={workbook} sheet={sheet} onOpenWorkbook={(wb) => void switchTo(wb)} onSheetAdded={selectSheet} />
+      </Toolbar>
       {grid && <FormulaBar grid={grid} engine={engine} />}
       <div className="main">
         <div className="sheet-area">
