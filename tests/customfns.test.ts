@@ -143,4 +143,33 @@ describe("custom functions", () => {
     await settle();
     expect(engine.getDisplay(data, 2, 1)).toBe("42");
   });
+
+  it("survives inserted rows/columns and undo", async () => {
+    const { engine, cf, calls, type } = setup({
+      DOUBLE: (x) => (x as number) * 2,
+      TOTAL: (rows) => (rows as number[][]).flat().reduce((a, b) => a + b, 0),
+    });
+    type(0, 1, 1, "5");
+    type(0, 2, 1, "=DOUBLE(A1)+1");
+    type(0, 3, 1, "=TOTAL(A1:A1)");
+    await settle();
+    engine.insertRows(0, 1, 2); // push everything down two rows
+    engine.insertCols(0, 1, 1); // and right one column
+    const input = engine.getInput(0, 4, 2);
+    expect(cf.toUser(0, 4, 2, input)).toBe("=DOUBLE(B3)+1");
+    expect(cf.toUser(0, 5, 2, engine.getInput(0, 5, 2))).toBe("=TOTAL(B3:B3)");
+    expect(engine.getDisplay(0, 4, 2)).toBe("11");
+
+    type(0, 3, 2, "8");
+    await settle();
+    expect(engine.getDisplay(0, 4, 2)).toBe("17");
+    expect(engine.getDisplay(0, 5, 2)).toBe("8");
+    expect(calls.at(-1)!.args).toEqual([[[8]]]);
+
+    // Retyping the same formula keeps its call site; editing it makes a new one.
+    expect(cf.toEngine(0, 4, 2, "=DOUBLE(B3)+1")).toBe(input);
+    engine.undo(); // the 8
+    engine.undo(); // the column insert
+    expect(cf.toUser(0, 4, 1, engine.getInput(0, 4, 1))).toBe("=DOUBLE(A3)+1");
+  });
 });

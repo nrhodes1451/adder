@@ -96,6 +96,10 @@ export interface Engine {
   clearRange(range: Range, source?: ChangeSource): void;
   usedRange(sheet: number): { rows: number; cols: number };
 
+  // structure (formulas referencing moved cells are adjusted by the engine)
+  insertRows(sheet: number, row: number, count: number): void;
+  insertCols(sheet: number, col: number, count: number): void;
+
   // geometry
   rowHeight(sheet: number, row: number): number;
   colWidth(sheet: number, col: number): number;

@@ -120,4 +120,19 @@ describe("IronCalcEngine", () => {
     expect(e.isBuiltinFunction("TEXTJOIN")).toBe(true);
     expect(e.isBuiltinFunction("double")).toBe(false);
   });
+
+  it("inserts rows and columns as single undo steps, adjusting formulas", () => {
+    const e = IronCalcEngine.create();
+    e.setRange(0, 1, 1, [["1", "=A1*2"], ["3", "=SUM(A1:A2)"]]);
+    e.insertRows(0, 2, 2);
+    expect(e.getInput(0, 4, 2)).toBe("=SUM(A1:A4)");
+    expect(e.getValue(0, 4, 1)).toBe(3);
+    expect(e.usedRange(0)).toEqual({ rows: 4, cols: 2 });
+    e.insertCols(0, 1, 1);
+    expect(e.getInput(0, 1, 3)).toBe("=B1*2");
+    e.undo();
+    expect(e.getInput(0, 1, 2)).toBe("=A1*2");
+    e.undo();
+    expect(e.getInput(0, 2, 2)).toBe("=SUM(A1:A2)");
+  });
 });

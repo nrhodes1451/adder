@@ -240,6 +240,22 @@ export class IronCalcEngine implements Engine {
     return { ...u };
   }
 
+  // ---- structure
+
+  insertRows(sheet: number, row: number, count: number): void {
+    this.model.insertRows(sheet, row, count);
+    const u = this.used.get(sheet);
+    if (u && row <= u.rows) u.rows = Math.min(MAX_ROWS, u.rows + count);
+    this.emit({ kind: "all" });
+  }
+
+  insertCols(sheet: number, col: number, count: number): void {
+    this.model.insertColumns(sheet, col, count);
+    const u = this.used.get(sheet);
+    if (u && col <= u.cols) u.cols = Math.min(MAX_COLS, u.cols + count);
+    this.emit({ kind: "all" });
+  }
+
   // ---- geometry
 
   rowHeight(sheet: number, row: number): number {

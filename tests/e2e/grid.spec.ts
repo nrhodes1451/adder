@@ -64,3 +64,54 @@ test("clicking a cell while typing a formula inserts a reference", async ({ page
   await page.keyboard.press("ArrowUp");
   await expect(formula(page)).toHaveValue("=A1*2");
 });
+
+test("ctrl+space selects columns, shift+space selects rows", async ({ page }) => {
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.keyboard.press("Control+Space");
+  await expect(nameBox(page)).toHaveValue("B:C");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Shift+Space");
+  await expect(nameBox(page)).toHaveValue("2:3");
+  // Typing still starts an edit.
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("a b");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowUp");
+  await expect(formula(page)).toHaveValue("a b");
+});
+
+test("ctrl+shift+plus inserts rows or columns for a whole-row/column selection", async ({ page }) => {
+  await typeCell(page, "1");
+  await typeCell(page, "2");
+  await typeCell(page, "=SUM(A1:A2)");
+  // Select rows 2 and insert two rows above.
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Shift+Space");
+  await page.keyboard.press("Control+Shift+Equal");
+  await expect(nameBox(page)).toHaveValue("2:3");
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("Control+ArrowDown"); // A1 is alone now
+  await expect(nameBox(page)).toHaveValue("A4");
+  await page.keyboard.press("ArrowDown");
+  await expect(formula(page)).toHaveValue("=SUM(A1:A4)");
+
+  // Column insert via header click.
+  await page.getByTestId("grid").click({ position: { x: 64 + 45, y: 12 } }); // column A header
+  await expect(nameBox(page)).toHaveValue("A:A");
+  await page.keyboard.press("Control+Shift+Equal");
+  await page.keyboard.press("Control+Home");
+  await expect(formula(page)).toHaveValue("");
+  await page.keyboard.press("ArrowRight");
+  await expect(formula(page)).toHaveValue("1");
+
+  // Undo removes the column again; a plain cell selection doesn't insert.
+  await page.keyboard.press("Control+z");
+  await page.keyboard.press("Control+Home");
+  await expect(formula(page)).toHaveValue("1");
+  await page.keyboard.press("Control+Shift+Equal");
+  await expect(formula(page)).toHaveValue("1");
+});

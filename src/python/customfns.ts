@@ -5,8 +5,10 @@
 //   column A      the result, written by us (outside undo history)
 //   columns B…    one mirror cell per argument: "=<arg>" (or a TEXTJOIN of a
 //                 range argument), so IronCalc tracks dependencies for us
-// The user's cell stores a rewritten formula that references the result cell;
-// the original text is kept in workbook meta and shown in the formula bar.
+// The user's cell stores a rewritten formula that references the result cell
+// (=__adder!$A$7+1). What the user sees is rebuilt from that formula and the
+// mirror cells, which IronCalc keeps up to date when rows/columns move, so
+// nothing here depends on cell positions.
 // After every change we diff the mirror values and re-invoke only the call
 // sites whose arguments changed.
 
@@ -14,8 +16,10 @@ import type { CellInput, Engine } from "../engine/types";
 
 export const SHADOW_SHEET = "__adder";
 const PENDING = "#CALC!";
+const SHADOW_REF = /__adder!\$A\$(\d+)/gi;
+const TEXTJOIN_MIRROR = /^=TEXTJOIN\(CHAR\(31\),FALSE,(.*)\)$/i;
 
-export type ArgSpec = { kind: "value" } | { kind: "range"; sheet: string; r1: number; c1: number; r2: number; c2: number };
+export type ArgSpec = { kind: "value" } | { kind: "range" };
 
 export interface CallSite {
   fn: string;
@@ -24,26 +28,22 @@ export interface CallSite {
   args: ArgSpec[];
 }
 
-export interface CustomCell {
-  original: string;
-  rewritten: string;
-  sites: number[];
-}
-
 export interface CustomState {
-  cells: Record<string, CustomCell>; // key: "sheet:row:col"
   sites: Record<number, CallSite>; // key: shadow row
   nextRow: number;
 }
 
-export const emptyCustomState = (): CustomState => ({ cells: {}, sites: {}, nextRow: 1 });
+export const emptyCustomState = (): CustomState => ({ sites: {}, nextRow: 1 });
 
 export interface CustomFunctionHost {
   call(name: string, args: unknown[]): Promise<{ value?: string; error?: string }>;
 }
 
-const key = (sheet: number, row: number, col: number) => `${sheet}:${row}:${col}`;
 const quoteSheet = (name: string) => `'${name.replace(/'/g, "''")}'`;
+
+function shadowRows(input: string): number[] {
+  return [...input.matchAll(SHADOW_REF)].map((m) => Number(m[1]));
+}
 
 interface RewriteContext {
   engine: Engine;
@@ -96,10 +96,7 @@ export function rewriteFormula(body: string, ctx: RewriteContext): string | null
       const text = qualifyRefs(ctx.engine, inner, ctx.sheetName);
       const at = ctx.engine.tokenize(text);
       const only = at.length === 1 ? at[0]! : null;
-      const spec: ArgSpec =
-        only?.kind === "range"
-          ? { kind: "range", sheet: only.sheet ?? ctx.sheetName, r1: only.r1!, c1: only.c1!, r2: only.r2!, c2: only.c2! }
-          : { kind: "value" };
+      const spec: ArgSpec = only?.kind === "range" ? { kind: "range" } : { kind: "value" };
       return { text, spec };
     });
     out += body.slice(pos, t.start) + ctx.allocate(t.text!.toUpperCase(), args);
@@ -110,13 +107,27 @@ export function rewriteFormula(body: string, ctx: RewriteContext): string | null
   return changed ? out + body.slice(pos) : null;
 }
 
+/** Remove "Sheet!" prefixes that point at `sheetName` (the formula's own sheet). */
+export function unqualifyRefs(engine: Engine, text: string, sheetName: string): string {
+  let out = "";
+  let pos = 0;
+  for (const t of engine.tokenize(text)) {
+    if ((t.kind !== "ref" && t.kind !== "range") || t.sheet?.toLowerCase() !== sheetName.toLowerCase()) continue;
+    const bang = text.lastIndexOf("!", t.end);
+    if (bang < t.start) continue;
+    out += text.slice(pos, t.start);
+    pos = bang + 1;
+  }
+  return out + text.slice(pos);
+}
+
 export class CustomFunctions {
   private registered = new Set<string>();
   private lastSig = new Map<number, string>();
   private version = new Map<number, number>();
+  /** Sites whose cell was overwritten. Undo can bring them back, so this is advisory. */
+  private dead = new Set<number>();
   private scheduled = false;
-  /** Cells rewritten by toEngine whose engine-normalized text we haven't seen yet. */
-  private awaitingCommit = new Set<string>();
   private off: () => void;
 
   constructor(
@@ -126,10 +137,12 @@ export class CustomFunctions {
     private save: (s: CustomState) => void,
     private log: (text: string) => void,
   ) {
+    this.findDeadSites();
     // Results stored in the workbook are current; only re-run on changes.
     for (const row of this.liveSites()) this.lastSig.set(row, this.signature(row));
     this.off = engine.onChange((e) => {
-      if (e.kind === "cells" && e.source !== "system") this.recordCommitted(e.ranges);
+      // Undo/redo/structural edits can resurrect overwritten cells.
+      if (e.kind === "all") this.dead.clear();
       // System writes matter too: a nested call's result feeds its parent's mirror.
       this.schedule();
     });
@@ -157,32 +170,27 @@ export class CustomFunctions {
 
   /** Transform user input before it reaches the engine. */
   toEngine(sheet: number, row: number, col: number, input: string): string {
-    const k = key(sheet, row, col);
-    const prior = this.state.cells[k];
-    if (!input.startsWith("=") || !this.registered.size) {
-      if (prior) this.forget(k);
-      return input;
+    const current = this.engine.getInput(sheet, row, col);
+    const currentSites = shadowRows(current);
+    if (currentSites.length) {
+      if (input === this.toUser(sheet, row, col, current)) return current; // unchanged: keep its call sites
+      for (const r of currentSites) this.markDead(r);
     }
-    if (prior && prior.original === input && !this.awaitingCommit.has(k)) return prior.rewritten;
-    const rewritten = this.rewrite(sheet, input);
-    if (prior) this.forget(k);
-    if (rewritten === null) return input;
-    this.state.cells[k] = rewritten.cell;
-    this.awaitingCommit.add(k);
-    this.save(this.state);
-    return rewritten.cell.rewritten;
+    if (!input.startsWith("=") || !this.registered.size) return input;
+    return this.rewrite(sheet, input) ?? input;
   }
 
-  /** What to show the user for a cell's stored input. */
-  toUser(sheet: number, row: number, col: number, input: string): string {
-    const c = this.state.cells[key(sheet, row, col)];
-    return c && c.rewritten === input ? c.original : input;
+  /** What to show the user for a cell's stored input (position-independent). */
+  toUser(sheet: number, _row: number, _col: number, input: string): string {
+    if (!input.startsWith("=") || !shadowRows(input).length) return input;
+    const sheetName = this.engine.sheets()[sheet]?.name ?? "";
+    return "=" + unqualifyRefs(this.engine, this.expand(input.slice(1), 0), sheetName);
   }
 
-  /** Original formula text if this cell is a live custom-function cell. */
+  /** Original formula text if this cell is a custom-function cell. */
   originalFor(sheet: number, row: number, col: number): string | undefined {
-    const c = this.state.cells[key(sheet, row, col)];
-    return c && this.engine.getInput(sheet, row, col) === c.rewritten ? c.original : undefined;
+    const input = this.engine.getInput(sheet, row, col);
+    return shadowRows(input).length ? this.toUser(sheet, row, col, input) : undefined;
   }
 
   // ---- internals
@@ -191,11 +199,26 @@ export class CustomFunctions {
     return this.engine.ensureSheet(SHADOW_SHEET, true);
   }
 
-  private rewrite(sheet: number, input: string): { cell: CustomCell } | null {
+  /** Replace result references with FN(args), rebuilt from the mirror cells. */
+  private expand(body: string, depth: number): string {
+    if (depth > 20) return body;
+    return body.replace(SHADOW_REF, (match, n: string) => {
+      const site = this.state.sites[Number(n)];
+      if (!site) return match;
+      const shadow = this.shadow();
+      const args = site.args.map((a, i) => {
+        const mirror = this.engine.getInput(shadow, site.row, i + 2);
+        const text = a.kind === "range" ? (TEXTJOIN_MIRROR.exec(mirror)?.[1] ?? mirror.slice(1)) : mirror.slice(1);
+        return this.expand(text, depth + 1);
+      });
+      return `${site.fn}(${args.join(", ")})`;
+    });
+  }
+
+  private rewrite(sheet: number, input: string): string | null {
     const sheetName = this.engine.sheets()[sheet]?.name ?? "Sheet1";
     const shadow = this.shadow();
     const writes: CellInput[] = [];
-    const sites: number[] = [];
     const body = rewriteFormula(input.slice(1), {
       engine: this.engine,
       sheetName,
@@ -203,7 +226,6 @@ export class CustomFunctions {
       allocate: (fn, args) => {
         const row = this.state.nextRow++;
         this.state.sites[row] = { fn, row, args: args.map((a) => a.spec) };
-        sites.push(row);
         writes.push({ sheet: shadow, row, col: 1, input: PENDING });
         args.forEach((a, i) =>
           writes.push({
@@ -218,37 +240,47 @@ export class CustomFunctions {
     });
     if (body === null) return null;
     this.engine.setSystemInputs(writes);
-    return { cell: { original: input, rewritten: "=" + body, sites } };
-  }
-
-  /** IronCalc normalizes formula text (quoting, spacing, case); keep what it actually stored. */
-  private recordCommitted(ranges: { sheet: number; row: number; col: number; rows: number; cols: number }[]): void {
-    for (const k of this.awaitingCommit) {
-      const [s, r, c] = k.split(":").map(Number) as [number, number, number];
-      const hit = ranges.some((g) => g.sheet === s && r >= g.row && r < g.row + g.rows && c >= g.col && c < g.col + g.cols);
-      const cell = this.state.cells[k];
-      if (!hit || !cell) continue;
-      this.awaitingCommit.delete(k);
-      cell.rewritten = this.engine.getInput(s, r, c);
-      this.save(this.state);
-    }
-  }
-
-  private forget(k: string): void {
-    const c = this.state.cells[k];
-    if (!c) return;
-    delete this.state.cells[k];
     this.save(this.state);
+    return "=" + body;
   }
 
-  /** Shadow rows referenced by cells whose stored input still matches (undo can invalidate). */
-  private liveSites(): number[] {
-    const rows: number[] = [];
-    for (const [k, c] of Object.entries(this.state.cells)) {
-      const [s, r, col] = k.split(":").map(Number) as [number, number, number];
-      if (this.engine.getInput(s, r, col) === c.rewritten) rows.push(...c.sites);
+  /** A site and the nested sites feeding its arguments. */
+  private markDead(row: number): void {
+    const site = this.state.sites[row];
+    if (!site || this.dead.has(row)) return;
+    this.dead.add(row);
+    const shadow = this.shadow();
+    site.args.forEach((_, i) => shadowRows(this.engine.getInput(shadow, row, i + 2)).forEach((r) => this.markDead(r)));
+  }
+
+  /** On load, sites no cell refers to (overwritten in earlier sessions) are dead. */
+  private findDeadSites(): void {
+    const rows = Object.keys(this.state.sites).map(Number);
+    if (!rows.length) return;
+    const referenced = new Set<number>();
+    for (const s of this.engine.sheets()) {
+      if (s.name === SHADOW_SHEET) continue;
+      const used = this.engine.usedRange(s.index);
+      if (used.rows * used.cols > 500_000) return; // too big to scan: treat all as live
+      for (let r = 1; r <= used.rows; r++) {
+        for (let c = 1; c <= used.cols; c++) for (const n of shadowRows(this.engine.getInput(s.index, r, c))) referenced.add(n);
+      }
     }
-    return rows;
+    for (const row of rows) this.dead.add(row);
+    for (const row of referenced) this.revive(row);
+  }
+
+  private revive(row: number): void {
+    const site = this.state.sites[row];
+    if (!site || !this.dead.delete(row)) return;
+    const shadow = this.shadow();
+    site.args.forEach((_, i) => shadowRows(this.engine.getInput(shadow, row, i + 2)).forEach((r) => this.revive(r)));
+  }
+
+  private liveSites(): number[] {
+    return Object.keys(this.state.sites)
+      .map(Number)
+      .filter((r) => !this.dead.has(r));
   }
 
   private signature(row: number): string {
@@ -267,9 +299,10 @@ export class CustomFunctions {
   }
 
   private check(): void {
-    if (!Object.keys(this.state.cells).length) return;
+    const live = this.liveSites();
+    if (!live.length) return;
     const shadow = this.shadow();
-    for (const row of this.liveSites()) {
+    for (const row of live) {
       const sig = this.signature(row);
       if (this.lastSig.get(row) === sig) continue;
       // Wait for upstream custom calls to finish rather than calling with #CALC!.
@@ -291,21 +324,26 @@ export class CustomFunctions {
     const v = (this.version.get(row) ?? 0) + 1;
     this.version.set(row, v);
     this.write(shadow, row, PENDING);
-    const args = site.args.map((a, i): unknown => (a.kind === "value" ? this.engine.getValue(shadow, row, i + 2) : this.rangeArg(a)));
+    const args = site.args.map((a, i): unknown =>
+      a.kind === "value" ? this.engine.getValue(shadow, row, i + 2) : this.rangeArg(this.engine.getInput(shadow, row, i + 2)),
+    );
     const res = await this.host.call(site.fn, args);
     if (this.version.get(row) !== v) return; // a newer call superseded this one
     if (res.error) this.log(`Error in ${site.fn}:\n${res.error}`);
     this.write(shadow, row, res.error ? "#VALUE!" : (res.value ?? ""));
   }
 
-  private rangeArg(a: Extract<ArgSpec, { kind: "range" }>): unknown {
-    const sheet = this.engine.sheets().find((s) => s.name === a.sheet);
-    if (!sheet) return { error: "#REF!" };
+  /** Values of a range argument, located from its (engine-maintained) mirror formula. */
+  private rangeArg(mirror: string): unknown {
+    const text = TEXTJOIN_MIRROR.exec(mirror)?.[1] ?? "";
+    const t = this.engine.tokenize(text).find((x) => x.kind === "range");
+    const sheet = t && this.engine.sheets().find((s) => s.name.toLowerCase() === t.sheet?.toLowerCase());
+    if (!t || !sheet) return { error: "#REF!" };
     const used = this.engine.usedRange(sheet.index);
     // Whole rows/columns are clipped to the used area.
-    const r2 = Math.min(a.r2, Math.max(a.r1, used.rows));
-    const c2 = Math.min(a.c2, Math.max(a.c1, used.cols));
-    return this.engine.getRangeValues({ sheet: sheet.index, row: a.r1, col: a.c1, rows: r2 - a.r1 + 1, cols: c2 - a.c1 + 1 });
+    const r2 = Math.min(t.r2!, Math.max(t.r1!, used.rows));
+    const c2 = Math.min(t.c2!, Math.max(t.c1!, used.cols));
+    return this.engine.getRangeValues({ sheet: sheet.index, row: t.r1!, col: t.c1!, rows: r2 - t.r1! + 1, cols: c2 - t.c1! + 1 });
   }
 
   private write(shadow: number, row: number, input: string): void {

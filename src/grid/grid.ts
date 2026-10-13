@@ -30,6 +30,8 @@ export class Grid {
   private sel: Selection = { anchor: { row: 1, col: 1 }, focus: { row: 1, col: 1 } };
   /** Active cell when it differs from the anchor (Enter/Tab cycling inside a range). */
   private cursor: CellPos | null = null;
+  /** Set when the selection is whole rows/columns (header click, Shift/Ctrl+Space). */
+  private whole: "rows" | "cols" | null = null;
 
   private rows = new Axis(MIN_ROWS, 25);
   private cols = new Axis(MIN_COLS, 90);
@@ -142,6 +144,31 @@ export class Grid {
   set selection(s: Selection) {
     this.sel = s;
     this.cursor = null;
+    this.whole = null;
+  }
+
+  get wholeSelection(): "rows" | "cols" | null {
+    return this.whole;
+  }
+
+  /** Select entire rows or columns `from`..`to`, optionally keeping the active cell. */
+  private selectWhole(kind: "rows" | "cols", from: number, to: number, active?: CellPos): void {
+    this.selection =
+      kind === "cols"
+        ? { anchor: { row: 1, col: from }, focus: { row: this.rows.count, col: to } }
+        : { anchor: { row: from, col: 1 }, focus: { row: to, col: this.cols.count } };
+    this.whole = kind;
+    if (active) this.cursor = active;
+    this.invalidate();
+    this.emit({ type: "selection" });
+  }
+
+  /** Insert as many rows/columns as are selected, before the selection (Ctrl+Shift+Plus). */
+  private insertAtSelection(): void {
+    if (!this.whole) return;
+    const b = selectionBounds(this.selection);
+    if (this.whole === "rows") this.engine.insertRows(this.sheet, b.r1, b.r2 - b.r1 + 1);
+    else this.engine.insertCols(this.sheet, b.c1, b.c2 - b.c1 + 1);
   }
 
   get active(): CellPos {
@@ -410,6 +437,13 @@ export class Grid {
       this.engine.redo();
     } else if (mod && e.key.toLowerCase() === "z") {
       this.engine.undo();
+    } else if (e.key === " " && (mod || e.shiftKey) && !(mod && e.shiftKey)) {
+      // Ctrl+Space: whole columns; Shift+Space: whole rows.
+      const b = selectionBounds(this.selection);
+      if (mod) this.selectWhole("cols", b.c1, b.c2, this.active);
+      else this.selectWhole("rows", b.r1, b.r2, this.active);
+    } else if (mod && (e.key === "+" || (e.shiftKey && (e.key === "=" || e.code === "Equal")))) {
+      this.insertAtSelection();
     } else if (mod && e.key.toLowerCase() === "a") {
       this.selection = { anchor: { row: 1, col: 1 }, focus: { row: this.rows.count, col: this.cols.count } };
       this.invalidate();
@@ -497,11 +531,9 @@ export class Grid {
     if (h.inColHeader && h.inRowHeader) {
       this.selection = { anchor: { row: 1, col: 1 }, focus: { row: this.rows.count, col: this.cols.count } };
     } else if (h.inColHeader) {
-      const anchor = e.shiftKey ? this.selection.anchor : { row: 1, col: h.col };
-      this.selection = { anchor, focus: { row: this.rows.count, col: h.col } };
+      this.selectWhole("cols", e.shiftKey ? this.selection.anchor.col : h.col, h.col);
     } else if (h.inRowHeader) {
-      const anchor = e.shiftKey ? this.selection.anchor : { row: h.row, col: 1 };
-      this.selection = { anchor, focus: { row: h.row, col: this.cols.count } };
+      this.selectWhole("rows", e.shiftKey ? this.selection.anchor.row : h.row, h.row);
     } else {
       this.select({ row: h.row, col: h.col }, e.shiftKey);
     }
@@ -518,7 +550,10 @@ export class Grid {
           : mode === "row"
             ? { row: m.row, col: this.cols.count }
             : { row: m.row, col: m.col };
-      if (focus.row !== this.selection.focus.row || focus.col !== this.selection.focus.col) {
+      if (focus.row === this.selection.focus.row && focus.col === this.selection.focus.col) return;
+      if (mode === "col") this.selectWhole("cols", this.selection.anchor.col, m.col);
+      else if (mode === "row") this.selectWhole("rows", this.selection.anchor.row, m.row);
+      else {
         this.selection = { anchor: this.selection.anchor, focus };
         this.invalidate();
         this.emit({ type: "selection" });

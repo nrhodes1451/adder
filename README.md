@@ -27,6 +27,9 @@ npm run e2e        # playwright (needs: sudo npx playwright install-deps chromiu
   - Pasting into a selection larger than what was copied repeats the copy across it (Excel semantics), shifting relative references.
   - Ctrl+Enter, in the cell editor or the formula bar, writes the value to every selected cell.
   - Either one is a single undo step.
+- Row and column selection and insert:
+  - Ctrl+Space selects the selected columns; Shift+Space selects the rows.
+  - Ctrl+Shift+Plus inserts that many rows or columns before a whole-row or whole-column selection.
 - [x] M4 files:
   - .xlsx import and export through SheetJS CE (`src/io/xlsx.ts`, behind `XlsxCodec`).
   - CSV import goes into a new sheet, with RFC 4180 parsing and delimiter sniffing.
@@ -71,7 +74,7 @@ def log_change(event):                 # event.sheet, event.range, event.values,
   - Argument "mirror" cells let IronCalc track dependencies.
   - We diff the mirror values after each change and call Python only when the arguments changed.
   - The result is written back through IronCalc's external-diff API, so it never enters undo history.
-  - The formula bar and xlsx export show the original formula text.
+  - The formula bar and xlsx export show the original formula text, rebuilt from the stored formula and the argument mirrors. IronCalc updates both when rows or columns move, so custom-function cells survive inserts and undo.
 
 **How it works:**
 - Writes are buffered in Python, grouped into rectangles, and sent as one batch per rectangle, each of which is a single undo step.
@@ -95,7 +98,6 @@ Load `/?seed=100000` to fill 100k × 26 cells. In headless Chromium with softwar
 - **Custom functions:**
   - They must return a single value.
   - Copying a custom-function cell copies a reference to the same result rather than a new call.
-  - Inserting rows or columns isn't tracked by the shadow cells. (The UI doesn't offer row/column insert yet anyway.)
 - **`on_edit` events:** they carry new values only, not old ones.
 - **Undo granularity:** each batched Python write is one undo step, so a script that writes several separate rectangles creates several steps.
 - **xlsx export:** see the SheetJS caveat above.

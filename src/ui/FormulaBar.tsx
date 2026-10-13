@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Engine } from "../engine/types";
-import { a1, selectionBounds } from "../grid/geometry";
+import { a1, colName, selectionBounds } from "../grid/geometry";
 import type { Grid } from "../grid/grid";
 
 export function FormulaBar({ grid, engine }: { grid: Grid; engine: Engine }) {
@@ -18,7 +18,15 @@ export function FormulaBar({ grid, engine }: { grid: Grid; engine: Engine }) {
 
   const { row, col } = grid.active;
   const b = selectionBounds(grid.selection);
-  const name = b.r1 === b.r2 && b.c1 === b.c2 ? a1(row, col) : `${a1(b.r1, b.c1)}:${a1(b.r2, b.c2)}`;
+  const whole = grid.wholeSelection;
+  const name =
+    whole === "cols"
+      ? `${colName(b.c1)}:${colName(b.c2)}`
+      : whole === "rows"
+        ? `${b.r1}:${b.r2}`
+        : b.r1 === b.r2 && b.c1 === b.c2
+          ? a1(row, col)
+          : `${a1(b.r1, b.c1)}:${a1(b.r2, b.c2)}`;
   const value = editText ?? grid.inputAt(row, col);
 
   return (
