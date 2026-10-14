@@ -1,0 +1,39 @@
+/* Loading screen / snake easter egg. Colours from the README logo. */
+.snake-screen {
+  --snake-body: #3b9b63;
+  --snake-grid: #e1e7e7;
+  --snake-food: #2c4e3a;
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  background: var(--bg); color: var(--muted); outline: none; user-select: none;
+  transition: opacity .25s ease;
+}
+@media (prefers-color-scheme: dark) {
+  .snake-screen { --snake-grid: #2c3430; --snake-food: #b9dcc6; }
+}
+.snake-screen.closing { opacity: 0; pointer-events: none; }
+/* Fast loads finish before anything shows, so the screen never flashes. */
+.snake-screen > * { animation: snake-in .3s ease .2s both; }
+.snake-screen.instant > * { animation-delay: 0s; }
+@keyframes snake-in { from { opacity: 0; } }
+
+.snake-board { width: min(220px, 60vw); height: auto; overflow: visible; }
+.snake-grid { fill: none; stroke: var(--snake-grid); stroke-width: 4; stroke-linecap: round; }
+.snake-grid > * { stroke-dasharray: 1; stroke-dashoffset: 1; animation: snake-draw .35s ease-out calc(.5s + var(--i, 0) * 60ms) forwards; }
+.snake-grid > rect { animation: snake-draw .7s ease-in-out .2s forwards; }
+.snake-grid > .fresh { animation-delay: calc(var(--i) * 80ms); }
+@keyframes snake-draw { to { stroke-dashoffset: 0; } }
+.snake-fill { fill: var(--snake-body); }
+.snake-eye { fill: var(--bg); }
+.snake-dead-eye { fill: none; stroke: var(--bg); stroke-width: 5; stroke-linecap: round; }
+.snake-tongue { fill: none; stroke: var(--snake-body); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.snake-food { fill: var(--snake-food); }
+
+.snake-status { font-size: 13px; font-variant-numeric: tabular-nums; min-height: 1.4em; }
+.snake-status.error { color: var(--danger); max-width: min(480px, 90vw); text-align: center; }
+.snake-hint { display: flex; gap: 4px; }
+.snake-hint kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .snake-grid > * { animation: none; stroke-dashoffset: 0; }
+}

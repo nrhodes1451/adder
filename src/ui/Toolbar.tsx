@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listWorkbooks, type WorkbookSummary } from "../io/idb";
+import { SnakeScreen } from "../snake/screen";
 import type { Workbook } from "./workbook";
 
 interface Props {
@@ -34,7 +35,7 @@ export function Toolbar({ workbook, onOpen, onNew, children }: Props) {
 
   return (
     <div className="toolbar">
-      <img className="logo" src="/icon.png" alt="Adder" title="Adder" />
+      <img className="logo" src="/icon.png" alt="Adder" title="Adder" onClick={() => SnakeScreen.show(false)} />
       <input
         type="text"
         aria-label="Workbook name"
