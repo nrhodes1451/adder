@@ -202,6 +202,21 @@ describe("IronCalcEngine", () => {
     expect(e.frozen(0)).toEqual({ rows: 2, cols: 1 });
   });
 
+  it("sets number formats as one undo step, including whole columns", () => {
+    const e = IronCalcEngine.create();
+    e.setInput(0, 1, 1, "1234.5");
+    e.setInput(0, 2, 1, "45000");
+    expect(e.numberFormat(0, 1, 1)).toBe("general");
+    e.setNumberFormat({ sheet: 0, row: 1, col: 1, rows: 2, cols: 1 }, "#,##0.00");
+    expect(e.getDisplay(0, 1, 1)).toBe("1,234.50");
+    expect(e.numberFormat(0, 2, 1)).toBe("#,##0.00");
+    e.undo();
+    expect(e.getDisplay(0, 1, 1)).toBe("1234.5");
+    e.setNumberFormat({ sheet: 0, row: 1, col: 2, rows: 1_048_576, cols: 1 }, "d-mmm-yy");
+    e.setInput(0, 900_000, 2, "45000");
+    expect(e.getDisplay(0, 900_000, 2)).toBe("15-Mar-23");
+  });
+
   it("adding a named sheet undoes in one step", () => {
     const e = IronCalcEngine.create();
     e.addSheet("Data");

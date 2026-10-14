@@ -203,6 +203,16 @@ export class IronCalcEngine implements Engine {
     };
   }
 
+  numberFormat(sheet: number, row: number, col: number): string {
+    return this.model.getCellStyle(sheet, row, col).style.num_fmt || "general";
+  }
+
+  setNumberFormat(r: Range, format: string): void {
+    this.model.updateRangeStyle({ sheet: r.sheet, row: r.row, column: r.col, width: r.cols, height: r.rows }, "num_fmt", format);
+    this.recorded();
+    this.emit({ kind: "cells", ranges: [r], source: "user" });
+  }
+
   getRangeValues(r: Range): CellValue[][] {
     const out: CellValue[][] = [];
     for (let i = 0; i < r.rows; i++) {

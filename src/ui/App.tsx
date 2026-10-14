@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChartLayer, type EditTarget } from "../charts/ChartLayer";
+import { CHART_TYPES, type ChartType } from "../charts/model";
 import type { Grid } from "../grid/grid";
 import { CustomFunctions, emptyCustomState, SHADOW_SHEET } from "../python/customfns";
 import { matchingRefs } from "../python/edits";
 import { PythonHost } from "../python/host";
 import { ConsoleStore } from "./console";
+import { ChartPanel } from "./ChartPanel";
 import { FileMenu } from "./FileMenu";
 import { FormulaBar } from "./FormulaBar";
 import { GridView } from "./GridView";
@@ -57,6 +60,23 @@ export function App({ initial }: { initial: Workbook }) {
   useEffect(() => {
     if (grid) grid.formulas = custom;
   }, [grid, custom]);
+
+  // Charts float over the grid; the layer follows the grid's sheet itself.
+  const [charts, setCharts] = useState<ChartLayer | null>(null);
+  const [chartEdit, setChartEdit] = useState<EditTarget | null>(null);
+  const closeChartEdit = useCallback(() => setChartEdit(null), []);
+  useEffect(() => {
+    if (!grid) return;
+    const layer = new ChartLayer(grid, workbook);
+    layer.onEdit = setChartEdit;
+    setCharts(layer);
+    if (import.meta.env.DEV) (window as unknown as { adderCharts: ChartLayer }).adderCharts = layer;
+    return () => {
+      layer.destroy();
+      setCharts(null);
+      setChartEdit(null);
+    };
+  }, [grid, workbook]);
 
   // Errors from grid operations (e.g. an insert IronCalc refuses) shown as a dismissible notice.
   const [notice, setNotice] = useState<string | null>(null);
@@ -153,6 +173,26 @@ export function App({ initial }: { initial: Workbook }) {
           exportOptions={() => ({ formulaFor: (s, r, c) => custom.originalFor(s, r, c), skipSheet: (n) => n === SHADOW_SHEET })}
           onOpenWorkbook={(wb) => void switchTo(wb)} onSheetAdded={selectSheet} />
         <span className="sep" />
+        <select
+          aria-label="Insert chart"
+          value=""
+          disabled={!charts}
+          onChange={(e) => {
+            const message = charts?.insert(e.target.value as ChartType);
+            if (message) {
+              setNotice(message);
+              grid?.focus();
+            }
+          }}
+        >
+          <option value="">Chart…</option>
+          {CHART_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t[0]!.toUpperCase() + t.slice(1)}
+            </option>
+          ))}
+        </select>
+        <span className="sep" />
         <button className={showScripts ? "active" : ""} aria-pressed={showScripts} onClick={() => setShowScripts((v) => !v)}>
           Python
         </button>
@@ -171,6 +211,7 @@ export function App({ initial }: { initial: Workbook }) {
           <GridView key={workbook.id} engine={engine} onReady={setGrid} />
           <SheetTabs key={`tabs-${workbook.id}`} engine={engine} active={sheet} onSelect={selectSheet} />
         </div>
+        {charts && chartEdit && <ChartPanel layer={charts} target={chartEdit} onClose={closeChartEdit} />}
         {showScripts && <ScriptPanel key={workbook.id} workbook={workbook} host={python} console={consoleStore} />}
       </div>
     </div>
