@@ -64,6 +64,22 @@ test("sheet tabs: add, rename, switch", async ({ page }) => {
   await expect(formula(page)).toHaveValue("on sheet 1");
 });
 
+test("Ctrl(+Shift)+PageUp/PageDown switch sheets", async ({ page }) => {
+  await page.getByRole("button", { name: "Add sheet" }).click();
+  await page.getByRole("button", { name: "Add sheet" }).click();
+  await expect(page.getByRole("tab", { selected: true })).toHaveText("Sheet3");
+  await page.keyboard.press("Control+PageDown");
+  await expect(page.getByRole("tab", { selected: true })).toHaveText("Sheet3");
+  await page.keyboard.press("Control+PageUp");
+  await expect(page.getByRole("tab", { selected: true })).toHaveText("Sheet2");
+  await page.keyboard.press("Control+Shift+PageUp");
+  await expect(page.getByRole("tab", { selected: true })).toHaveText("Sheet1");
+  await page.keyboard.press("Control+PageUp");
+  await expect(page.getByRole("tab", { selected: true })).toHaveText("Sheet1");
+  await page.keyboard.press("Control+Shift+PageDown");
+  await expect(page.getByRole("tab", { selected: true })).toHaveText("Sheet2");
+});
+
 test("copy/paste internally adjusts formulas; external TSV pastes as a block", async ({ page }) => {
   await page.keyboard.type("2");
   await page.keyboard.press("Tab");

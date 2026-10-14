@@ -122,6 +122,26 @@ export function App({ initial }: { initial: Workbook }) {
     grid?.setSheet(i);
     grid?.focus();
   };
+  const selectSheetRef = useRef(selectSheet);
+  selectSheetRef.current = selectSheet;
+
+  // Ctrl+PageUp/PageDown (and Ctrl+Shift+, as Google Sheets does, since Chrome
+  // keeps the unshifted keys for its own tabs) moves to the previous/next visible sheet.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.key !== "PageUp" && e.key !== "PageDown") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      const visible = engine.sheets().filter((s) => !s.hidden).map((s) => s.index);
+      const at = visible.indexOf(sheetRef.current);
+      const next = visible[at + (e.key === "PageDown" ? 1 : -1)];
+      e.preventDefault();
+      if (next !== undefined) selectSheetRef.current(next);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [engine]);
 
   return (
     <div className="app">

@@ -528,7 +528,8 @@ export class Grid {
       } else {
         this.move(arrow[0], arrow[1], e.shiftKey);
       }
-    } else if (e.key === "PageDown" || e.key === "PageUp") {
+    } else if ((e.key === "PageDown" || e.key === "PageUp") && !mod) {
+      // Ctrl+PageUp/PageDown bubbles up to the app, which switches sheets.
       this.move(e.key === "PageDown" ? page : -page, 0, e.shiftKey);
     } else if (e.key === "Home") {
       const from = e.shiftKey ? this.selection.focus : this.selection.anchor;

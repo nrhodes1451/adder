@@ -48,7 +48,7 @@ ws.range("F1").from_pandas(df.groupby("Region").sum().reset_index())
   - Paste-to-fill and Ctrl+Enter fill.
   - Undo/redo.
   - Selecting, inserting and deleting whole rows and columns.
-  - Excel keyboard navigation.
+  - Excel keyboard navigation, including Ctrl+PgUp/PgDn to switch sheets (Ctrl+Shift+PgUp/PgDn in browsers that keep the unshifted keys for their own tabs).
 - **Files:** .xlsx import and export, and CSV with delimiter sniffing.
 - **Local-first:** workbooks autosave to IndexedDB.
 
