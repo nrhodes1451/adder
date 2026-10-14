@@ -4,6 +4,7 @@ import { parseCsv } from "../io/csv";
 import { MAX_COLS, MAX_ROWS } from "../engine/types";
 import { CompletionList } from "./completion";
 import { a1, Axis, type CellPos, type Selection, selectionBounds } from "./geometry";
+import { KeyTips } from "./keytips";
 import { type Rect, RectTween } from "./tween";
 import { CellCache, COL_HEADER_HEIGHT, DARK, LIGHT, render, ROW_HEADER_WIDTH } from "./renderer";
 
@@ -63,6 +64,10 @@ export class Grid {
   private highlight: HTMLDivElement;
   private refsCache: { text: string; refs: FormulaReference[] } | null = null;
   private rowOverrides: [number, number][] = [];
+  /** Rows at the top / columns at the left that stay put while the rest scrolls. */
+  private frozen = { rows: 0, cols: 0 };
+  private keyTips: KeyTips;
+  private keyTipsHint: HTMLDivElement;
   private clip: { data: EngineClipboard; cut: boolean } | null = null;
   private editing: { row: number; col: number } | null = null;
   private completion: CompletionList;
@@ -111,7 +116,19 @@ export class Grid {
     this.highlight.setAttribute("data-testid", "editor-highlight");
     this.completion = new CompletionList((name) => this.acceptCompletion(name));
     this.scroller.append(this.canvas, this.spacer);
-    this.wrapper.append(this.scroller, this.editor, this.highlight, this.completion.el);
+    this.keyTipsHint = el("div", "adder-keytips");
+    this.keyTipsHint.hidden = true;
+    this.keyTipsHint.setAttribute("data-testid", "keytips");
+    this.keyTips = new KeyTips(
+      [
+        { keys: "WFF", label: "Freeze panes", run: () => this.freeze("panes") },
+        { keys: "WFR", label: "Freeze top row", run: () => this.freeze("row") },
+        { keys: "WFC", label: "Freeze first column", run: () => this.freeze("col") },
+      ],
+      { W: "View", WF: "Freeze" },
+      (hint) => this.showKeyTips(hint),
+    );
+    this.wrapper.append(this.scroller, this.editor, this.highlight, this.completion.el, this.keyTipsHint);
     container.append(this.wrapper);
     this.ctx = this.canvas.getContext("2d")!;
 
@@ -121,6 +138,10 @@ export class Grid {
     };
     on(this.scroller, "scroll", () => this.onScroll());
     on(this.scroller, "keydown", (e) => this.onKey(e));
+    on(this.scroller, "keyup", (e) => {
+      if (this.keyTips.keyup(e)) e.preventDefault(); // keeps Firefox from toggling its menu bar
+    });
+    on(this.scroller, "blur", () => this.keyTips.cancel());
     on(this.scroller, "mousedown", (e) => this.onMouseDown(e));
     on(this.scroller, "mousemove", (e) => this.onHover(e));
     on(this.scroller, "dblclick", (e) => this.onDblClick(e));
@@ -439,8 +460,8 @@ export class Grid {
   private positionEditor(): void {
     if (!this.editing) return;
     const { row, col } = this.editing;
-    const x = ROW_HEADER_WIDTH + this.cols.offset(col) - this.scroller.scrollLeft;
-    const y = COL_HEADER_HEIGHT + this.rows.offset(row) - this.scroller.scrollTop;
+    const x = ROW_HEADER_WIDTH + this.cols.offset(col) - (col <= this.frozen.cols ? 0 : this.scroller.scrollLeft);
+    const y = COL_HEADER_HEIGHT + this.rows.offset(row) - (row <= this.frozen.rows ? 0 : this.scroller.scrollTop);
     const s = this.editor.style;
     s.left = `${x - 1}px`;
     s.top = `${y - 1}px`;
@@ -663,6 +684,10 @@ export class Grid {
   // ---- input handlers
 
   private onKey(e: KeyboardEvent): void {
+    if (this.keyTips.keydown(e)) {
+      e.preventDefault();
+      return;
+    }
     const mod = e.ctrlKey || e.metaKey;
     const structural = structuralShortcut(e);
     if (structural) {
@@ -771,14 +796,30 @@ export class Grid {
       y,
       inColHeader: y < COL_HEADER_HEIGHT,
       inRowHeader: x < ROW_HEADER_WIDTH,
-      row: this.rows.indexAt(y - COL_HEADER_HEIGHT + this.scroller.scrollTop),
-      col: this.cols.indexAt(x - ROW_HEADER_WIDTH + this.scroller.scrollLeft),
+      row: this.rows.indexAt(this.sheetY(y)),
+      col: this.cols.indexAt(this.sheetX(x)),
     };
+  }
+
+  /** Frozen block size in px. */
+  private frozenSize(): { w: number; h: number } {
+    return { w: this.cols.offset(this.frozen.cols + 1), h: this.rows.offset(this.frozen.rows + 1) };
+  }
+
+  /** Screen x (relative to the scroller) to sheet px; the frozen columns don't scroll. */
+  private sheetX(x: number): number {
+    const px = x - ROW_HEADER_WIDTH;
+    return px < this.frozenSize().w ? px : px + this.scroller.scrollLeft;
+  }
+
+  private sheetY(y: number): number {
+    const px = y - COL_HEADER_HEIGHT;
+    return px < this.frozenSize().h ? px : px + this.scroller.scrollTop;
   }
 
   /** Column whose right border is under x (header only), for resizing. */
   private resizeTarget(x: number): number | null {
-    const px = x - ROW_HEADER_WIDTH + this.scroller.scrollLeft;
+    const px = this.sheetX(x);
     const col = this.cols.indexAt(px);
     const right = this.cols.offset(col + 1);
     if (Math.abs(px - right) <= RESIZE_HIT) return col;
@@ -794,6 +835,7 @@ export class Grid {
   }
 
   private onMouseDown(e: MouseEvent): void {
+    this.keyTips.cancel();
     if (e.button !== 0) return;
     const h = this.hit(e);
     if (h.x > this.scroller.clientWidth || h.y > this.scroller.clientHeight) return; // native scrollbar
@@ -891,9 +933,60 @@ export class Grid {
   private autoScroll(x: number, y: number): void {
     const w = this.scroller.clientWidth;
     const hgt = this.scroller.clientHeight;
-    const dx = x > w ? x - w : x < ROW_HEADER_WIDTH ? x - ROW_HEADER_WIDTH : 0;
-    const dy = y > hgt ? y - hgt : y < COL_HEADER_HEIGHT ? y - COL_HEADER_HEIGHT : 0;
+    // Dragging into the frozen panes scrolls back towards them.
+    const f = this.frozenSize();
+    const left = ROW_HEADER_WIDTH + f.w;
+    const top = COL_HEADER_HEIGHT + f.h;
+    const dx = x > w ? x - w : x < left ? x - left : 0;
+    const dy = y > hgt ? y - hgt : y < top ? y - top : 0;
     if (dx || dy) this.scroller.scrollBy(dx, dy);
+  }
+
+  // ---- freeze panes
+
+  /**
+   * Excel's View › Freeze: "panes" freezes the rows above and columns left of
+   * the active cell, or unfreezes if anything is frozen; "row"/"col" freeze
+   * just the first row/column.
+   */
+  freeze(kind: "panes" | "row" | "col"): void {
+    if (this.editing) this.commitEdit(null);
+    let { row, col } = this.active;
+    if (kind === "row") [row, col] = [2, 1];
+    else if (kind === "col") [row, col] = [1, 2];
+    else if (this.frozen.rows || this.frozen.cols) [row, col] = [1, 1];
+    else if (row === 1 && col === 1) {
+      this.emit({ type: "error", message: "Select the cell below and to the right of the rows and columns to freeze." });
+      return;
+    }
+    // Frozen panes that fill the window would leave nothing to scroll.
+    const viewW = this.scroller.clientWidth - ROW_HEADER_WIDTH;
+    const viewH = this.scroller.clientHeight - COL_HEADER_HEIGHT;
+    if (this.cols.offset(col) > viewW * 0.8 || this.rows.offset(row) > viewH * 0.8) {
+      this.emit({ type: "error", message: "Can't freeze there: the frozen rows or columns wouldn't leave room to scroll." });
+      return;
+    }
+    this.engine.setFrozen(this.sheet, row - 1, col - 1);
+    this.scrollIntoView(this.active);
+    this.focus();
+  }
+
+  private showKeyTips(hint: { seq: string; options: { key: string; label: string }[] } | null): void {
+    this.keyTipsHint.hidden = !hint;
+    if (!hint) return;
+    const path = document.createElement("span");
+    path.className = "path";
+    path.textContent = ["Alt", ...hint.seq].join(" › ");
+    this.keyTipsHint.replaceChildren(
+      path,
+      ...hint.options.map(({ key, label }) => {
+        const item = document.createElement("span");
+        const kbd = document.createElement("kbd");
+        kbd.textContent = key;
+        item.append(kbd, ` ${label}`);
+        return item;
+      }),
+    );
   }
 
   // ---- geometry & scrolling
@@ -931,6 +1024,7 @@ export class Grid {
       if (w !== defCol) colOv.push([c, w]);
     }
     this.rowOverrides = rowOv;
+    this.frozen = this.engine.frozen(this.sheet);
     this.rows = new Axis(rowCount, defRow, rowOv);
     this.cols = new Axis(colCount, defCol, colOv);
     this.layout();
@@ -972,11 +1066,17 @@ export class Grid {
     const bottom = top + this.rows.size(p.row);
     const left = this.cols.offset(p.col);
     const right = left + this.cols.size(p.col);
+    // Frozen cells are always in view; the rest must land in the area beside them.
+    const f = this.frozenSize();
     let { scrollTop, scrollLeft } = s;
-    if (top < scrollTop) scrollTop = top;
-    else if (bottom > scrollTop + viewH) scrollTop = bottom - viewH;
-    if (left < scrollLeft) scrollLeft = left;
-    else if (right > scrollLeft + viewW) scrollLeft = right - viewW;
+    if (p.row > this.frozen.rows) {
+      if (top < scrollTop + f.h) scrollTop = top - f.h;
+      else if (bottom > scrollTop + viewH) scrollTop = bottom - viewH;
+    }
+    if (p.col > this.frozen.cols) {
+      if (left < scrollLeft + f.w) scrollLeft = left - f.w;
+      else if (right > scrollLeft + viewW) scrollLeft = right - viewW;
+    }
     if (scrollTop !== s.scrollTop || scrollLeft !== s.scrollLeft) s.scrollTo(scrollLeft, scrollTop);
   }
 
@@ -1035,6 +1135,7 @@ export class Grid {
         references,
         palette: this.dark.matches ? DARK : LIGHT,
         font: FONT,
+        frozen: this.frozen,
       },
       this.cache,
     );

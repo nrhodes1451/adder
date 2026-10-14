@@ -95,6 +95,10 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0; fon
 button.active { border-color: var(--accent); color: var(--accent); }
 .notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; background: color-mix(in srgb, var(--danger) 12%, var(--bg)); color: var(--danger); border-bottom: 1px solid var(--border); }
 
+.adder-keytips { position: absolute; z-index: 5; left: 72px; bottom: 10px; display: flex; gap: 12px; align-items: center; padding: 5px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.15); font-size: 12px; }
+.adder-keytips[hidden] { display: none; }
+.adder-keytips .path { color: var(--muted); font-family: var(--mono); }
+.adder-keytips kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--accent); font-weight: 600; }
 .adder-completion { position: absolute; z-index: 4; min-width: 200px; max-width: 320px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); overflow: hidden; font: 12px var(--mono); }
 .adder-completion ul { list-style: none; margin: 0; padding: 4px 0; max-height: 216px; overflow-y: auto; }
 .adder-completion li { padding: 3px 10px; cursor: pointer; white-space: nowrap; }

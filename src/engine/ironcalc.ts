@@ -376,6 +376,26 @@ export class IronCalcEngine implements Engine {
     this.emit({ kind: "all" });
   }
 
+  frozen(sheet: number): { rows: number; cols: number } {
+    return { rows: this.model.getFrozenRowsCount(sheet), cols: this.model.getFrozenColumnsCount(sheet) };
+  }
+
+  setFrozen(sheet: number, rows: number, cols: number): void {
+    const now = this.frozen(sheet);
+    let steps = 0;
+    if (now.rows !== rows) {
+      this.model.setFrozenRowsCount(sheet, rows);
+      steps++;
+    }
+    if (now.cols !== cols) {
+      this.model.setFrozenColumnsCount(sheet, cols);
+      steps++;
+    }
+    if (!steps) return;
+    this.recorded(steps);
+    this.emit({ kind: "all" });
+  }
+
   // ---- navigation
 
   /** Ctrl+Arrow semantics: jump to the edge of the current data block. */

@@ -109,6 +109,10 @@ export interface Engine {
   rowHeight(sheet: number, row: number): number;
   colWidth(sheet: number, col: number): number;
   setColWidth(sheet: number, col: number, width: number): void;
+  /** Rows above / columns left of the scrolling area that stay in view. */
+  frozen(sheet: number): { rows: number; cols: number };
+  /** Freeze the first `rows` rows and `cols` columns (0 to unfreeze); one undo step. */
+  setFrozen(sheet: number, rows: number, cols: number): void;
 
   // navigation helpers
   edge(sheet: number, row: number, col: number, dir: Direction): { row: number; col: number };

@@ -186,6 +186,22 @@ describe("IronCalcEngine", () => {
     expect(e.getInput(0, 1_048_576, 2)).toBe("");
   });
 
+  it("freezes panes as one undo step and keeps them through save/load", () => {
+    const e = IronCalcEngine.create();
+    e.setInput(0, 1, 1, "x");
+    e.setFrozen(0, 2, 1);
+    expect(e.frozen(0)).toEqual({ rows: 2, cols: 1 });
+    expect(IronCalcEngine.fromBytes(e.serialize()).frozen(0)).toEqual({ rows: 2, cols: 1 });
+    e.undo();
+    expect(e.frozen(0)).toEqual({ rows: 0, cols: 0 });
+    expect(e.getInput(0, 1, 1)).toBe("x"); // the edit before is untouched
+    e.redo();
+    expect(e.frozen(0)).toEqual({ rows: 2, cols: 1 });
+    e.setFrozen(0, 0, 1); // only rows change: still one step
+    e.undo();
+    expect(e.frozen(0)).toEqual({ rows: 2, cols: 1 });
+  });
+
   it("adding a named sheet undoes in one step", () => {
     const e = IronCalcEngine.create();
     e.addSheet("Data");

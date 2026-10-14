@@ -344,3 +344,61 @@ test("references in a formula being edited are coloured and outlined in the grid
   await expect(page.getByTestId("editor-highlight")).toBeHidden();
   await expect.poll(hasOutline).toBe(false);
 });
+
+test("Alt W F F freezes panes at the active cell, and again unfreezes", async ({ page }) => {
+  const grid = page.getByTestId("grid");
+  const tips = page.getByTestId("keytips");
+  await grid.click({ position: { x: 64 + 90 + 45, y: 24 + 50 + 12 } }); // B3
+  await page.keyboard.press("Alt"); // tap Alt, then letters
+  await expect(tips).toContainText("View");
+  await page.keyboard.press("w");
+  await page.keyboard.press("f");
+  await expect(tips).toContainText("Freeze panes");
+  await page.keyboard.press("f");
+  await expect(tips).toBeHidden();
+
+  // Scroll down 500px: rows 1–2 and column A stay put.
+  await page.locator(".adder-grid-scroller").evaluate((el) => (el.scrollTop = 500));
+  await grid.click({ position: { x: 64 + 90 + 45, y: 24 + 12 } });
+  await expect(nameBox(page)).toHaveValue("B1");
+  await grid.click({ position: { x: 64 + 45, y: 24 + 50 + 12 } }); // first scrolled row
+  await expect(nameBox(page)).toHaveValue("A23");
+  await page.keyboard.press("Control+Home"); // frozen cells need no scrolling, the pane jumps back
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(nameBox(page)).toHaveValue("A3");
+  expect(await page.locator(".adder-grid-scroller").evaluate((el) => el.scrollTop)).toBe(0);
+
+  // Holding Alt for the first letter works too; FF again unfreezes.
+  await page.locator(".adder-grid-scroller").evaluate((el) => (el.scrollTop = 500));
+  await page.keyboard.press("Alt+w");
+  await page.keyboard.press("f");
+  await page.keyboard.press("f");
+  await page.locator(".adder-grid-scroller").evaluate((el) => (el.scrollTop = 500)); // unfreezing scrolled back to A3
+  await grid.click({ position: { x: 64 + 45, y: 24 + 12 } });
+  await expect(nameBox(page)).toHaveValue("A21");
+
+  // Undo brings the freeze back.
+  await page.keyboard.press("Control+z");
+  await page.locator(".adder-grid-scroller").evaluate((el) => (el.scrollTop = 500));
+  await grid.click({ position: { x: 64 + 45, y: 24 + 12 } });
+  await expect(nameBox(page)).toHaveValue("A1");
+});
+
+test("key tips: Escape and unknown letters leave the sequence, freezing at A1 explains itself", async ({ page }) => {
+  const tips = page.getByTestId("keytips");
+  await page.keyboard.press("Alt");
+  await page.keyboard.press("w");
+  await page.keyboard.press("Escape");
+  await expect(tips).toBeHidden();
+  await page.keyboard.press("Alt+w");
+  await page.keyboard.press("q");
+  await expect(tips).toBeHidden();
+  await page.keyboard.type("z"); // back to normal typing
+  await expect(formula(page)).toHaveValue("z");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Alt+w");
+  await page.keyboard.press("f");
+  await page.keyboard.press("f");
+  await expect(page.getByTestId("notice")).toContainText("Select the cell below and to the right");
+});
