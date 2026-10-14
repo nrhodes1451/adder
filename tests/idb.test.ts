@@ -14,4 +14,20 @@ describe("idb store", () => {
     await deleteWorkbook("a");
     expect(await loadWorkbook("a")).toBeUndefined();
   });
+
+  it("round-trips charts in meta", async () => {
+    const chart = {
+      id: "c1",
+      sheet: "Sheet1",
+      range: { row: 1, col: 1, rows: 3, cols: 2 },
+      type: "bar" as const,
+      anchor: { row: 1, col: 4, dx: 3, dy: 0 },
+      width: 480,
+      height: 300,
+    };
+    await saveWorkbook({ id: "c", name: "C", bytes: new Uint8Array(), meta: { scripts: [], charts: [chart] }, updatedAt: 3 });
+    expect((await loadWorkbook("c"))!.meta.charts).toEqual([chart]);
+    await deleteWorkbook("c");
+    expect(await loadWorkbook("a")).toBeUndefined();
+  });
 });

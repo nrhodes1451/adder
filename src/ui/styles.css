@@ -54,6 +54,47 @@ select, input[type="text"] { font: inherit; color: inherit; background: var(--bg
 .adder-grid-scroller { position: absolute; inset: 0; overflow: auto; outline: none; }
 .adder-grid-canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
 .adder-grid-spacer { position: absolute; top: 0; left: 0; pointer-events: none; }
+.adder-grid-overlay { position: absolute; top: 24px; left: 64px; overflow: hidden; pointer-events: none; z-index: 2; }
+.adder-chart { position: absolute; top: 0; left: 0; pointer-events: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,.12); cursor: move; outline: none; }
+.adder-chart:focus, .adder-chart.editing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 2px 10px rgba(0,0,0,.18); }
+.adder-chart-canvas { position: absolute; inset: 0; }
+.adder-chart-handle { position: absolute; right: -5px; bottom: -5px; width: 10px; height: 10px; background: var(--accent); border: 2px solid var(--bg); border-radius: 2px; cursor: nwse-resize; display: none; }
+.adder-chart:focus .adder-chart-handle { display: block; }
+.adder-chart-part { position: absolute; border: 1px solid var(--accent); pointer-events: none; }
+.adder-part-handle { position: absolute; width: 7px; height: 7px; margin: -4px 0 0 -4px; background: var(--bg); border: 1px solid var(--accent); border-radius: 50%; pointer-events: auto; display: none; }
+.adder-chart-part.resizable .adder-part-handle { display: block; }
+.adder-part-handle[data-dir="nw"] { left: 0; top: 0; cursor: nwse-resize; }
+.adder-part-handle[data-dir="n"] { left: 50%; top: 0; cursor: ns-resize; }
+.adder-part-handle[data-dir="ne"] { left: 100%; top: 0; cursor: nesw-resize; }
+.adder-part-handle[data-dir="e"] { left: 100%; top: 50%; cursor: ew-resize; }
+.adder-part-handle[data-dir="se"] { left: 100%; top: 100%; cursor: nwse-resize; }
+.adder-part-handle[data-dir="s"] { left: 50%; top: 100%; cursor: ns-resize; }
+.adder-part-handle[data-dir="sw"] { left: 0; top: 100%; cursor: nesw-resize; }
+.adder-part-handle[data-dir="w"] { left: 0; top: 50%; cursor: ew-resize; }
+
+.adder-menu { position: fixed; z-index: 100; min-width: 180px; padding: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); display: flex; flex-direction: column; }
+.adder-menu button { border: 0; border-radius: 4px; background: none; text-align: left; padding: 5px 10px; }
+.adder-menu button:hover, .adder-menu button:focus { background: var(--accent-soft); outline: none; }
+.adder-menu button.danger { color: var(--danger); }
+.adder-menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+
+.chart-panel { width: 280px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
+.chart-panel-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.chart-panel-body { flex: 1; overflow: auto; }
+.chart-panel details { border-bottom: 1px solid var(--border); }
+.chart-panel summary { padding: 8px 12px; cursor: pointer; font-weight: 600; user-select: none; }
+.chart-panel-section { display: flex; flex-direction: column; gap: 8px; padding: 2px 12px 12px; }
+.chart-panel .field { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; color: var(--muted); }
+.chart-panel .field > :last-child { min-width: 0; color: var(--text); }
+.chart-panel .field.check { grid-template-columns: auto 1fr; justify-content: start; }
+.chart-panel input[type="number"] { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; width: 100%; }
+.chart-panel .colour { display: flex; align-items: center; gap: 8px; }
+.chart-panel input[type="color"] { width: 40px; height: 24px; padding: 0 2px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+.chart-panel .toggles { display: flex; gap: 4px; }
+.chart-panel .toggles button { width: 30px; padding: 3px 0; }
+.chart-panel .buttons { display: flex; gap: 8px; }
+.chart-panel .subhead { margin-top: 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.chart-panel button.danger { color: var(--danger); }
 /* Formulas: the textarea keeps the caret and text selection, a mirrored layer on top shows the coloured text. */
 .adder-grid-editor.highlighted { color: transparent; caret-color: var(--text); }
 .adder-grid-editor-highlight {

@@ -402,3 +402,49 @@ test("key tips: Escape and unknown letters leave the sequence, freezing at A1 ex
   await page.keyboard.press("f");
   await expect(page.getByTestId("notice")).toContainText("Select the cell below and to the right");
 });
+
+test("number format shortcuts: Ctrl+Shift+1, Ctrl+#, Alt H 0 / Alt H 9", async ({ page }) => {
+  const shown = (row: number, col = 1) =>
+    page.evaluate(([r, c]) => (window as any).adderGrid.engine.getDisplay(0, r, c) as string, [row, col]);
+  for (const v of ["1234.56", "45000", "0.1257"]) await typeCell(page, v);
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Shift+ArrowDown");
+
+  await page.keyboard.press("Control+Shift+Digit1");
+  await expect.poll(() => shown(1)).toBe("1,234.56");
+  expect(await shown(3)).toBe("0.13");
+
+  await page.keyboard.press("Alt"); // Alt H 0: one more decimal, for the whole selection
+  await page.keyboard.press("h");
+  await page.keyboard.press("0");
+  await expect.poll(() => shown(3)).toBe("0.126");
+  await page.keyboard.press("Alt+h");
+  await page.keyboard.press("9");
+  await page.keyboard.press("Alt+h");
+  await page.keyboard.press("9");
+  await page.keyboard.press("Alt+h");
+  await page.keyboard.press("9");
+  await expect.poll(() => shown(1)).toBe("1,235");
+  await page.keyboard.press("Control+z"); // each step undoes on its own
+  await expect.poll(() => shown(1)).toBe("1,234.6");
+
+  // Ctrl+# on one cell; like Excel, the formula bar then shows the date too.
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Control+Shift+Digit3");
+  await expect.poll(() => shown(2)).toBe("15-Mar-23");
+  await expect(formula(page)).toHaveValue("15-Mar-23");
+  // Decimal steps leave dates alone.
+  await page.keyboard.press("Alt+h");
+  await page.keyboard.press("0");
+  expect(await shown(2)).toBe("15-Mar-23");
+
+  // A whole column formats cells typed later too.
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("Control+Shift+Digit1");
+  await page.keyboard.press("ArrowDown");
+  await typeCell(page, "3");
+  await expect.poll(() => shown(3, 2)).toBe("3.00");
+});

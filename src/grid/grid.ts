@@ -1,3 +1,4 @@
+import { adjustDecimals, DATE_FORMAT, NUMBER_FORMAT } from "../engine/numfmt";
 import { closeParens, cycleLock, formatRef, referenceAt, type RefLock, refLock, shiftFormula, tile } from "../engine/formula";
 import type { Engine, EngineClipboard, Range } from "../engine/types";
 import { parseCsv } from "../io/csv";
@@ -36,7 +37,9 @@ export type GridEvent =
   | { type: "edit"; text: string | null }
   | { type: "error"; message: string }
   /** The editor's caret moved programmatically (e.g. after autocomplete); the formula bar follows. */
-  | { type: "caret"; position: number };
+  | { type: "caret"; position: number }
+  /** Painted after a scroll, resize, sheet switch or geometry change; overlays reposition. */
+  | { type: "viewport" };
 
 /**
  * Canvas spreadsheet grid. Owns scrolling, selection, keyboard and the in-cell
@@ -68,6 +71,8 @@ export class Grid {
   private frozen = { rows: 0, cols: 0 };
   private keyTips: KeyTips;
   private keyTipsHint: HTMLDivElement;
+  /** Layer over the cell area (below the headers, clear of the scrollbars) for floating objects such as charts. */
+  readonly overlay: HTMLDivElement;
   private clip: { data: EngineClipboard; cut: boolean } | null = null;
   private editing: { row: number; col: number } | null = null;
   private completion: CompletionList;
@@ -124,11 +129,14 @@ export class Grid {
         { keys: "WFF", label: "Freeze panes", run: () => this.freeze("panes") },
         { keys: "WFR", label: "Freeze top row", run: () => this.freeze("row") },
         { keys: "WFC", label: "Freeze first column", run: () => this.freeze("col") },
+        { keys: "H0", label: "Increase decimal", run: () => this.changeDecimals(1) },
+        { keys: "H9", label: "Decrease decimal", run: () => this.changeDecimals(-1) },
       ],
-      { W: "View", WF: "Freeze" },
+      { W: "View", WF: "Freeze", H: "Home" },
       (hint) => this.showKeyTips(hint),
     );
-    this.wrapper.append(this.scroller, this.editor, this.highlight, this.completion.el, this.keyTipsHint);
+    this.overlay = el("div", "adder-grid-overlay");
+    this.wrapper.append(this.scroller, this.overlay, this.editor, this.highlight, this.completion.el, this.keyTipsHint);
     container.append(this.wrapper);
     this.ctx = this.canvas.getContext("2d")!;
 
@@ -293,7 +301,8 @@ export class Grid {
   }
 
   private move(dr: number, dc: number, extend: boolean): void {
-    const from = extend ? this.selection.focus : this.selection.anchor;
+    // Plain arrows step from the active cell (which may differ from the anchor after Ctrl+Space or Tab).
+    const from = extend ? this.selection.focus : this.active;
     this.select({ row: from.row + dr, col: from.col + dc }, extend);
   }
 
@@ -722,6 +731,10 @@ export class Grid {
       this.advance(0, e.shiftKey ? -1 : 1);
     } else if (e.key === "F2") {
       this.startEdit();
+    } else if (mod && (e.key === "#" || (e.shiftKey && e.code === "Digit3"))) {
+      this.setNumberFormat(DATE_FORMAT);
+    } else if (mod && (e.key === "!" || (e.shiftKey && e.code === "Digit1"))) {
+      this.setNumberFormat(NUMBER_FORMAT);
     } else if (e.key === "Delete" || e.key === "Backspace") {
       this.engine.clearRange(this.selectedRange);
     } else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
@@ -799,6 +812,26 @@ export class Grid {
       row: this.rows.indexAt(this.sheetY(y)),
       col: this.cols.indexAt(this.sheetX(x)),
     };
+  }
+
+  /** Top-left of a cell in px relative to the overlay; frozen rows/columns don't scroll. */
+  cellOffset(row: number, col: number): { x: number; y: number } {
+    return {
+      x: this.cols.offset(col) - (col <= this.frozen.cols ? 0 : this.scroller.scrollLeft),
+      y: this.rows.offset(row) - (row <= this.frozen.rows ? 0 : this.scroller.scrollTop),
+    };
+  }
+
+  /** The cell under an overlay-relative point, and the point's offset into it. */
+  cellAtOffset(x: number, y: number): { row: number; col: number; dx: number; dy: number } {
+    const row = this.rows.indexAt(this.sheetY(y + COL_HEADER_HEIGHT));
+    const col = this.cols.indexAt(this.sheetX(x + ROW_HEADER_WIDTH));
+    const o = this.cellOffset(row, col);
+    return { row, col, dx: Math.max(0, x - o.x), dy: Math.max(0, y - o.y) };
+  }
+
+  scrollBy(dx: number, dy: number): void {
+    this.scroller.scrollBy(dx, dy);
   }
 
   /** Frozen block size in px. */
@@ -940,6 +973,28 @@ export class Grid {
     const dx = x > w ? x - w : x < left ? x - left : 0;
     const dy = y > hgt ? y - hgt : y < top ? y - top : 0;
     if (dx || dy) this.scroller.scrollBy(dx, dy);
+  }
+
+  // ---- number formats
+
+  /** The selection as a range to format: whole rows/columns (and Ctrl+A) reach the sheet's real edges. */
+  private formatRange(): Range {
+    const r = this.selectedRange;
+    const allRows = this.whole === "cols" || (r.row === 1 && r.rows >= this.rows.count);
+    const allCols = this.whole === "rows" || (r.col === 1 && r.cols >= this.cols.count);
+    return { ...r, rows: allRows ? MAX_ROWS : r.rows, cols: allCols ? MAX_COLS : r.cols };
+  }
+
+  /** Ctrl+Shift+1 / Ctrl+#: apply a number format to the selection. */
+  setNumberFormat(format: string): void {
+    this.engine.setNumberFormat(this.formatRange(), format);
+  }
+
+  /** Alt H 0 / Alt H 9: one more or fewer decimal, worked out from the active cell like Excel. */
+  changeDecimals(delta: 1 | -1): void {
+    const { row, col } = this.active;
+    const next = adjustDecimals(this.engine.numberFormat(this.sheet, row, col), delta, this.engine.getDisplay(this.sheet, row, col));
+    if (next) this.setNumberFormat(next);
   }
 
   // ---- freeze panes
@@ -1141,6 +1196,10 @@ export class Grid {
     );
     this.paintTimes.push(performance.now() - t);
     if (this.paintTimes.length > 600) this.paintTimes.splice(0, 300);
+    const o = this.overlay.style;
+    o.right = `${this.scroller.offsetWidth - w}px`;
+    o.bottom = `${this.scroller.offsetHeight - h}px`;
+    this.emit({ type: "viewport" });
   }
 
   /** A selection's outline in sheet px. */

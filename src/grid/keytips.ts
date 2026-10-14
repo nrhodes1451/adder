@@ -6,9 +6,9 @@ export interface KeyTip {
 }
 
 /**
- * Excel-style ribbon key tips: tap Alt (or hold it for the first letter),
- * then type letters, e.g. Alt W F F. Letters are read from the physical key
- * so Option-modified characters on macOS still match.
+ * Excel-style ribbon key tips: tap Alt (or hold it for the first key), then
+ * type letters or digits, e.g. Alt W F F. Keys are read from their physical
+ * position so Option-modified characters on macOS still match.
  */
 export class KeyTips {
   /** Letters typed so far; null when inactive. */
@@ -33,7 +33,7 @@ export class KeyTips {
       return false;
     }
     this.altAlone = false;
-    const letter = /^Key([A-Z])$/.exec(e.code)?.[1];
+    const letter = /^(?:Key|Digit)([A-Z0-9])$/.exec(e.code)?.[1];
     if (this.seq === null) {
       if (!e.altKey || e.ctrlKey || e.metaKey || !letter || !this.continues(letter)) return false;
       this.step(letter);

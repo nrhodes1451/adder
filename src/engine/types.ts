@@ -89,6 +89,10 @@ export interface Engine {
   getKind(sheet: number, row: number, col: number): CellKind;
   getValue(sheet: number, row: number, col: number): CellValue;
   getStyle(sheet: number, row: number, col: number): CellStyle;
+  /** Excel number format code; "general" when none is set. */
+  numberFormat(sheet: number, row: number, col: number): string;
+  /** Set the number format of every cell in `range` (whole rows/columns included); one undo step. */
+  setNumberFormat(range: Range, format: string): void;
   getRangeValues(range: Range): CellValue[][];
   setInput(sheet: number, row: number, col: number, input: string, source?: ChangeSource): void;
   /** Batched write of raw inputs anchored at (sheet,row,col); one undo step. */

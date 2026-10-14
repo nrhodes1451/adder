@@ -1,3 +1,4 @@
+import type { ChartSpec } from "../charts/model";
 import type { CustomState } from "../python/customfns";
 
 // Workbook persistence in IndexedDB. Engine state is stored as IronCalc bytes;
@@ -12,6 +13,8 @@ export interface WorkbookMeta {
   scripts: Script[];
   /** Custom-function bookkeeping (see python/customfns.ts). */
   custom?: CustomState;
+  /** Charts floating over sheets (see charts/model.ts). */
+  charts?: ChartSpec[];
 }
 
 export interface WorkbookRecord {
