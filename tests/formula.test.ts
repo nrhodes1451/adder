@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { beforeAll, describe, expect, it } from "vitest";
-import { closeParens, shiftFormula, tile } from "../src/engine/formula";
+import { closeParens, cycleLock, formatRef, referenceAt, shiftFormula, tile } from "../src/engine/formula";
 import { IronCalcEngine, loadIronCalc } from "../src/engine/ironcalc";
 
 const require = createRequire(import.meta.url);
@@ -64,5 +64,31 @@ describe("function completion", () => {
     expect(names.filter((n) => n.startsWith("AVER"))).toEqual(["AVERAGE", "AVERAGEA", "AVERAGEIF", "AVERAGEIFS"]);
     // spot-check that the generated list matches the installed engine
     for (const n of names.slice(0, 40)) expect(e.isBuiltinFunction(n)).toBe(true);
+  });
+});
+
+describe("reference helpers", () => {
+  it("formats pointed-at ranges", () => {
+    expect(formatRef(2, 1, 2, 1)).toBe("A2");
+    expect(formatRef(5, 3, 2, 1)).toBe("A2:C5");
+    expect(formatRef(1, 1, 3, 2, 1)).toBe("$A$1:$B$3");
+    expect(formatRef(1, 1, 1, 1, 2)).toBe("A$1");
+    expect(formatRef(1, 1, 1, 1, 3)).toBe("$A1");
+  });
+
+  it("cycles locks like F4", () => {
+    const seen = ["A1"];
+    for (let i = 0; i < 4; i++) seen.push(cycleLock(seen[i]!));
+    expect(seen).toEqual(["A1", "$A$1", "A$1", "$A1", "A1"]);
+    expect(cycleLock("A1:B2")).toBe("$A$1:$B$2");
+    expect(cycleLock("Data!$A$1:$B$2")).toBe("Data!A$1:B$2");
+    expect(cycleLock("A:A")).toBe("$A:$A");
+  });
+
+  it("finds the reference at the caret", () => {
+    expect(referenceAt(e, "=SUM(A1:B2)+C3", 7)).toEqual({ from: 5, to: 10 });
+    expect(referenceAt(e, "=SUM(A1:B2)+C3", 14)).toEqual({ from: 12, to: 14 });
+    expect(referenceAt(e, "=SUM(1)", 6)).toBeNull();
+    expect(referenceAt(e, "A1", 2)).toBeNull();
   });
 });

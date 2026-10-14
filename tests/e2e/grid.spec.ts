@@ -237,3 +237,110 @@ test("formula autocomplete: =aver → AVERAGE( → click A1 → Tab commits =AVE
   await page.keyboard.press("ArrowUp");
   await expect(formula(page)).toHaveValue("=1+ROUND(2.6)");
 });
+
+test("arrow keys point at references while typing a formula; shift extends, F4 locks", async ({ page }) => {
+  for (const v of ["1", "2", "3"]) await typeCell(page, v); // A1:A3, now at A4
+  await page.keyboard.type("=pow");
+  await page.keyboard.press("Tab");
+  await expect(formula(page)).toHaveValue("=POWER(");
+  await page.keyboard.press("ArrowUp");
+  await expect(formula(page)).toHaveValue("=POWER(A3");
+  await page.keyboard.press("ArrowUp");
+  await expect(formula(page)).toHaveValue("=POWER(A2");
+  await page.keyboard.press("Shift+ArrowUp");
+  await expect(formula(page)).toHaveValue("=POWER(A1:A2");
+  await page.keyboard.press("ArrowRight"); // collapses back to a single cell
+  await expect(formula(page)).toHaveValue("=POWER(B2");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("F4");
+  await expect(formula(page)).toHaveValue("=POWER($A$2");
+  await page.keyboard.press("ArrowUp"); // keeps the lock while pointing
+  await expect(formula(page)).toHaveValue("=POWER($A$1");
+  await page.keyboard.press("F4");
+  await page.keyboard.press("F4");
+  await expect(formula(page)).toHaveValue("=POWER($A1");
+  await page.keyboard.type(",");
+  await page.keyboard.press("ArrowUp"); // typing an operator starts a new reference
+  await expect(formula(page)).toHaveValue("=POWER($A1,A3");
+  await page.keyboard.press("Enter");
+  await expect(nameBox(page)).toHaveValue("A5");
+  await page.keyboard.press("ArrowUp");
+  await expect(formula(page)).toHaveValue("=POWER($A1,A3)");
+});
+
+test("F2 switches between pointing and moving the caret", async ({ page }) => {
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("=SUM(");
+  await page.keyboard.press("F2"); // edit mode: arrows move the caret
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.type("X");
+  await expect(formula(page)).toHaveValue("=SUMX(");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("End");
+  await page.keyboard.press("F2"); // back to pointing
+  await page.keyboard.press("ArrowUp");
+  await expect(formula(page)).toHaveValue("=SUM(A1");
+  await page.keyboard.press("Escape");
+
+  // A cell opened with F2 starts in edit mode; F4 locks the reference at the caret.
+  await typeCell(page, "=A1+B1");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("F2");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("F4");
+  await expect(formula(page)).toHaveValue("=A1+$B$1");
+
+  // Plain text: arrows commit and move, like Excel.
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("hi");
+  await page.keyboard.press("ArrowRight");
+  await expect(nameBox(page)).toHaveValue("B2");
+});
+
+test("dragging over cells while typing a formula inserts a range", async ({ page }) => {
+  const grid = page.getByTestId("grid");
+  const box = (await grid.boundingBox())!;
+  const at = (col: number, row: number) => ({ x: box.x + 64 + 90 * (col - 1) + 45, y: box.y + 24 + 25 * (row - 1) + 12 });
+  await grid.click({ position: { x: 64 + 90 * 3 + 45, y: 36 } }); // D1
+  await page.keyboard.type("=SUM(");
+  await page.mouse.move(at(1, 1).x, at(1, 1).y);
+  await page.mouse.down();
+  await page.mouse.move(at(2, 3).x, at(2, 3).y, { steps: 4 });
+  await page.mouse.up();
+  await expect(formula(page)).toHaveValue("=SUM(A1:B3");
+  await page.keyboard.press("Shift+ArrowRight"); // keyboard extends the dragged range
+  await expect(formula(page)).toHaveValue("=SUM(A1:C3");
+  await page.mouse.click(at(2, 2).x, at(2, 2).y); // clicking again replaces it
+  await expect(formula(page)).toHaveValue("=SUM(B2");
+  await page.keyboard.press("Enter");
+  await expect(nameBox(page)).toHaveValue("D2");
+});
+
+test("references in a formula being edited are coloured and outlined in the grid", async ({ page }) => {
+  await page.getByTestId("grid").click({ position: { x: 64 + 90 * 4 + 45, y: 36 } }); // E1
+  await page.keyboard.type("=A1+B2:C3+$a$1+Other!D4");
+  const refs = page.getByTestId("editor-highlight").locator("[data-ref]");
+  await expect(refs).toHaveText(["A1", "B2:C3", "$a$1", "Other!D4"]);
+  const colors = await refs.evaluateAll((els) => els.map((e) => getComputedStyle(e).color));
+  expect(colors[0]).toBe(colors[2]); // the same cell shares a colour
+  expect(new Set([colors[0], colors[1], colors[3]]).size).toBe(3);
+  await expect(page.getByTestId("formula-highlight").locator("[data-ref]")).toHaveText(["A1", "B2:C3", "$a$1", "Other!D4"]);
+
+  // B2:C3's top edge is dashed in its colour.
+  const [r, g, b] = colors[1]!.match(/\d+/g)!.map(Number);
+  const hasOutline = () =>
+    page.evaluate(
+      ([r, g, b]) => {
+        const c = document.querySelector<HTMLCanvasElement>("canvas.adder-grid-canvas")!;
+        const dpr = devicePixelRatio;
+        const d = c.getContext("2d")!.getImageData(Math.round(160 * dpr), Math.round(48 * dpr), Math.round(160 * dpr), Math.round(3 * dpr)).data;
+        for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i]! - r!) + Math.abs(d[i + 1]! - g!) + Math.abs(d[i + 2]! - b!) < 30) return true;
+        return false;
+      },
+      [r, g, b],
+    );
+  await expect.poll(hasOutline).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("editor-highlight")).toBeHidden();
+  await expect.poll(hasOutline).toBe(false);
+});

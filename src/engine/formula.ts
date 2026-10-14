@@ -97,3 +97,58 @@ export function closeParens(input: string): string {
   }
   return depth > 0 && !inString ? input + ")".repeat(depth) : input;
 }
+
+/** Which parts of a reference are $-anchored, in Excel's F4 order: A1 → $A$1 → A$1 → $A1 → A1. */
+export type RefLock = 0 | 1 | 2 | 3;
+const LOCKS: { col: boolean; row: boolean }[] = [
+  { col: false, row: false },
+  { col: true, row: true },
+  { col: false, row: true },
+  { col: true, row: false },
+];
+
+/** "A1" / "A1:B2" text for a pointed-at range, anchored per `lock`. */
+export function formatRef(r1: number, c1: number, r2: number, c2: number, lock: RefLock = 0): string {
+  const { col, row } = LOCKS[lock]!;
+  const part = (r: number, c: number) => `${col ? "$" : ""}${colName(c)}${row ? "$" : ""}${r}`;
+  const [top, bottom, left, right] = [Math.min(r1, r2), Math.max(r1, r2), Math.min(c1, c2), Math.max(c1, c2)];
+  return top === bottom && left === right ? part(top, left) : `${part(top, left)}:${part(bottom, right)}`;
+}
+
+/** The lock state of a reference's first part. */
+export function refLock(ref: string): RefLock {
+  const m = REF_PART.exec(ref.slice(ref.lastIndexOf("!") + 1).split(":")[0]!);
+  const col = !!m?.[1] && !!m[2];
+  const row = !!m?.[3] && !!m[4];
+  return LOCKS.findIndex((l) => l.col === col && l.row === row) as RefLock;
+}
+
+/** Re-anchor every part of a reference ("Sheet1!A1:B2", "A:A", "$A$1"...) to `lock`. */
+export function withLock(ref: string, lock: RefLock): string {
+  const bang = ref.lastIndexOf("!");
+  const { col, row } = LOCKS[lock]!;
+  const parts = ref
+    .slice(bang + 1)
+    .split(":")
+    .map((p) => {
+      const m = REF_PART.exec(p);
+      if (!m || (!m[2] && !m[4])) return p;
+      return (m[2] ? (col ? "$" : "") + m[2] : "") + (m[4] ? (row ? "$" : "") + m[4] : "");
+    });
+  return ref.slice(0, bang + 1) + parts.join(":");
+}
+
+/** Excel's F4: step a reference to the next lock state. */
+export function cycleLock(ref: string): string {
+  return withLock(ref, ((refLock(ref) + 1) % 4) as RefLock);
+}
+
+/** Span of the reference/range token the caret is in or just after, in `text` offsets. */
+export function referenceAt(engine: Engine, text: string, caret: number): { from: number; to: number } | null {
+  if (!text.startsWith("=")) return null;
+  const at = caret - 1; // body offset
+  for (const t of engine.tokenize(text.slice(1))) {
+    if ((t.kind === "ref" || t.kind === "range") && t.start <= at && at <= t.end) return { from: t.start + 1, to: t.end + 1 };
+  }
+  return null;
+}

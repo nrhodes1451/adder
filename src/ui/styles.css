@@ -44,12 +44,22 @@ select, input[type="text"] { font: inherit; color: inherit; background: var(--bg
 .formula-bar input.name-box { flex: none; width: 90px; border: 0; border-right: 1px solid var(--border); border-radius: 0; text-align: center; font-family: var(--mono); }
 .formula-bar .fx { padding: 0 8px; color: var(--muted); font-style: italic; display: flex; align-items: center; border-right: 1px solid var(--border); }
 .formula-bar input { flex: 1; border: 0; border-radius: 0; font-family: var(--mono); padding: 0 8px; outline: none; }
+.formula-input { flex: 1; display: flex; position: relative; min-width: 0; background: var(--bg); }
+.formula-input input { position: relative; z-index: 1; min-width: 0; background: transparent; font: 13px var(--mono); }
+.formula-input input.highlighted { color: transparent; caret-color: var(--text); }
+.formula-highlight { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 8px; overflow: hidden; white-space: pre; pointer-events: none; font: 13px var(--mono); color: var(--text); }
 
 .grid-host { flex: 1; min-height: 0; position: relative; }
 .adder-grid { position: absolute; inset: 0; }
 .adder-grid-scroller { position: absolute; inset: 0; overflow: auto; outline: none; }
 .adder-grid-canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
 .adder-grid-spacer { position: absolute; top: 0; left: 0; pointer-events: none; }
+/* Formulas: the textarea keeps the caret and text selection, a mirrored layer on top shows the coloured text. */
+.adder-grid-editor.highlighted { color: transparent; caret-color: var(--text); }
+.adder-grid-editor-highlight {
+  position: absolute; z-index: 2; pointer-events: none; overflow: hidden; white-space: pre;
+  padding: 3px 4px; margin: 0; border: 2px solid transparent; color: var(--text);
+}
 .adder-grid-editor {
   position: absolute; z-index: 2; resize: none; overflow: hidden; white-space: pre;
   padding: 3px 4px; margin: 0; border: 2px solid var(--accent); outline: none;
@@ -85,7 +95,7 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0; fon
 button.active { border-color: var(--accent); color: var(--accent); }
 .notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; background: color-mix(in srgb, var(--danger) 12%, var(--bg)); color: var(--danger); border-bottom: 1px solid var(--border); }
 
-.adder-completion { position: absolute; z-index: 3; min-width: 200px; max-width: 320px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); overflow: hidden; font: 12px var(--mono); }
+.adder-completion { position: absolute; z-index: 4; min-width: 200px; max-width: 320px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); overflow: hidden; font: 12px var(--mono); }
 .adder-completion ul { list-style: none; margin: 0; padding: 4px 0; max-height: 216px; overflow-y: auto; }
 .adder-completion li { padding: 3px 10px; cursor: pointer; white-space: nowrap; }
 .adder-completion li:hover { background: var(--surface); }

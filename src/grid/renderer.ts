@@ -1,5 +1,6 @@
 import type { CellKind, CellStyle, Engine } from "../engine/types";
 import { type Axis, colName, type Selection, selectionBounds } from "./geometry";
+import type { Rect } from "./tween";
 
 export const ROW_HEADER_WIDTH = 64;
 export const COL_HEADER_HEIGHT = 24;
@@ -15,6 +16,8 @@ export interface Palette {
   headerActiveText: string;
   selectionFill: string;
   selectionBorder: string;
+  /** Colours for the references in a formula being edited, in order of appearance (like Excel). */
+  refColors: string[];
   error: string;
 }
 
@@ -28,6 +31,7 @@ export const LIGHT: Palette = {
   headerActiveText: "#1c3d8f",
   selectionFill: "rgba(37, 99, 235, 0.10)",
   selectionBorder: "#2563eb",
+  refColors: ["#2563eb", "#dc2626", "#9333ea", "#16a34a", "#c2410c", "#db2777", "#0891b2"],
   error: "#c62828",
 };
 
@@ -41,6 +45,7 @@ export const DARK: Palette = {
   headerActiveText: "#b8cbff",
   selectionFill: "rgba(96, 140, 255, 0.16)",
   selectionBorder: "#6b93ff",
+  refColors: ["#6b93ff", "#f87171", "#c084fc", "#4ade80", "#fb923c", "#f472b6", "#22d3ee"],
   error: "#ff8a80",
 };
 
@@ -87,7 +92,11 @@ export interface RenderState {
   width: number;
   height: number;
   selection: Selection;
+  /** Where to draw the selection outline, in sheet px (animated between cells). */
+  selectionRect: Rect;
   active: { row: number; col: number };
+  /** Dashed outlines of the references in the formula being edited, in sheet px. */
+  references?: { rect: Rect; color: string }[];
   palette: Palette;
   font: string;
 }
@@ -192,10 +201,10 @@ export function render(ctx: CanvasRenderingContext2D, s: RenderState, cache: Cel
   }
 
   // Selection.
-  const sx1 = ROW_HEADER_WIDTH + cols.offset(sel.c1) - s.scrollX;
-  const sy1 = COL_HEADER_HEIGHT + rows.offset(sel.r1) - s.scrollY;
-  const sx2 = ROW_HEADER_WIDTH + cols.offset(sel.c2 + 1) - s.scrollX;
-  const sy2 = COL_HEADER_HEIGHT + rows.offset(sel.r2 + 1) - s.scrollY;
+  const sx1 = ROW_HEADER_WIDTH + s.selectionRect.x1 - s.scrollX;
+  const sy1 = COL_HEADER_HEIGHT + s.selectionRect.y1 - s.scrollY;
+  const sx2 = ROW_HEADER_WIDTH + s.selectionRect.x2 - s.scrollX;
+  const sy2 = COL_HEADER_HEIGHT + s.selectionRect.y2 - s.scrollY;
   ctx.save();
   ctx.beginPath();
   ctx.rect(ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, s.width, s.height);
@@ -214,6 +223,18 @@ export function render(ctx: CanvasRenderingContext2D, s: RenderState, cache: Cel
   ctx.strokeStyle = p.selectionBorder;
   ctx.lineWidth = 2;
   ctx.strokeRect(sx1 - 0.5, sy1 - 0.5, sx2 - sx1, sy2 - sy1);
+  ctx.setLineDash([4, 3]);
+  for (const { rect: r, color } of s.references ?? []) {
+    // Clamp whole rows/columns to just past the viewport so the dashes stay put.
+    const rx1 = Math.max(ROW_HEADER_WIDTH - 2, ROW_HEADER_WIDTH + r.x1 - s.scrollX);
+    const ry1 = Math.max(COL_HEADER_HEIGHT - 2, COL_HEADER_HEIGHT + r.y1 - s.scrollY);
+    const rx2 = Math.min(s.width + 2, ROW_HEADER_WIDTH + r.x2 - s.scrollX);
+    const ry2 = Math.min(s.height + 2, COL_HEADER_HEIGHT + r.y2 - s.scrollY);
+    if (rx2 < rx1 || ry2 < ry1) continue;
+    ctx.strokeStyle = color;
+    ctx.strokeRect(rx1 - 0.5, ry1 - 0.5, rx2 - rx1, ry2 - ry1);
+  }
+  ctx.setLineDash([]);
   ctx.restore();
 
   // Headers (drawn last so they stay on top).

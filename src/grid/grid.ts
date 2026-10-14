@@ -1,9 +1,10 @@
-import { closeParens, shiftFormula, tile } from "../engine/formula";
+import { closeParens, cycleLock, formatRef, referenceAt, type RefLock, refLock, shiftFormula, tile } from "../engine/formula";
 import type { Engine, EngineClipboard, Range } from "../engine/types";
 import { parseCsv } from "../io/csv";
 import { MAX_COLS, MAX_ROWS } from "../engine/types";
 import { CompletionList } from "./completion";
 import { a1, Axis, type CellPos, type Selection, selectionBounds } from "./geometry";
+import { type Rect, RectTween } from "./tween";
 import { CellCache, COL_HEADER_HEIGHT, DARK, LIGHT, render, ROW_HEADER_WIDTH } from "./renderer";
 
 const FONT = '13px Inter, system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -19,6 +20,14 @@ export interface FormulaAdapter {
   toUser(sheet: number, row: number, col: number, input: string): string;
   /** Extra function names to offer in formula autocomplete (e.g. Python custom functions). */
   functionNames?(): string[];
+}
+
+/** A reference in the formula being edited: its span in the text, colour slot, and cells (null when on another sheet). */
+export interface FormulaReference {
+  from: number;
+  to: number;
+  color: number;
+  bounds: { r1: number; c1: number; r2: number; c2: number } | null;
 }
 
 export type GridEvent =
@@ -50,16 +59,33 @@ export class Grid {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private editor: HTMLTextAreaElement;
+  /** Coloured copy of the editor text, laid over the textarea (whose own text is transparent for formulas). */
+  private highlight: HTMLDivElement;
+  private refsCache: { text: string; refs: FormulaReference[] } | null = null;
   private rowOverrides: [number, number][] = [];
   private clip: { data: EngineClipboard; cut: boolean } | null = null;
   private editing: { row: number; col: number } | null = null;
   private completion: CompletionList;
   /** Span of the partial function name the completion would replace. */
   private completing: { from: number; to: number } | null = null;
+  /**
+   * Excel's editor modes: in "enter" (started by typing) arrow keys pick cell
+   * references in a formula, or commit; in "edit" (F2, double-click) they move
+   * the caret. F2 toggles.
+   */
+  private mode: "enter" | "edit" = "enter";
+  /** The reference being picked with arrows/mouse (Excel's Point mode): its span in the editor text and the cells. */
+  private pointing: { from: number; to: number; anchor: CellPos; focus: CellPos; lock: RefLock } | null = null;
   private dirty = false;
   private listeners = new Set<(e: GridEvent) => void>();
   private disposers: (() => void)[] = [];
   private dark = matchMedia("(prefers-color-scheme: dark)");
+  private reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  /** Slide the selection and pointed-reference outlines between cells, like Excel. */
+  private selTween = new RectTween();
+  private refTween = new RectTween();
+  /** Cells the outlines were last painted for; geometry-only changes (resizes) snap instead of sliding. */
+  private paintedKeys = { sel: "", ref: "" };
   /** Duration of recent paints in ms (dev diagnostics). */
   readonly paintTimes: number[] = [];
 
@@ -79,9 +105,13 @@ export class Grid {
     this.editor = el("textarea", "adder-grid-editor");
     this.editor.spellcheck = false;
     this.editor.hidden = true;
+    this.highlight = el("div", "adder-grid-editor-highlight");
+    this.highlight.hidden = true;
+    this.highlight.setAttribute("aria-hidden", "true");
+    this.highlight.setAttribute("data-testid", "editor-highlight");
     this.completion = new CompletionList((name) => this.acceptCompletion(name));
     this.scroller.append(this.canvas, this.spacer);
-    this.wrapper.append(this.scroller, this.editor, this.completion.el);
+    this.wrapper.append(this.scroller, this.editor, this.highlight, this.completion.el);
     container.append(this.wrapper);
     this.ctx = this.canvas.getContext("2d")!;
 
@@ -99,12 +129,19 @@ export class Grid {
     on(this.scroller, "paste", (e) => this.onPaste(e));
     on(this.editor, "keydown", (e) => this.onEditorKey(e));
     on(this.editor, "input", () => {
+      this.pointing = null;
+      this.positionEditor();
       this.updateCompletion(this.editor.value, this.editor.selectionStart);
       this.emit({ type: "edit", text: this.editor.value });
     });
     // Caret moves (clicks, Home/End, ←→) change what's being completed.
     on(this.editor, "keyup", (e) => {
-      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) this.updateCompletion(this.editor.value, this.editor.selectionStart);
+      if (!this.pointing && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) this.updateCompletion(this.editor.value, this.editor.selectionStart);
+    });
+    on(this.editor, "mousedown", () => (this.pointing = null));
+    on(this.editor, "scroll", () => {
+      this.highlight.scrollTop = this.editor.scrollTop;
+      this.highlight.scrollLeft = this.editor.scrollLeft;
     });
     on(this.editor, "blur", () => {
       // Clicking into the formula bar shouldn't drop the edit.
@@ -150,6 +187,7 @@ export class Grid {
   setSheet(sheet: number): void {
     if (this.editing) this.commitEdit(null);
     this.sheet = sheet;
+    this.selTween.reset();
     this.cache.clear();
     this.loadGeometry();
     this.scroller.scrollTo(0, 0);
@@ -264,7 +302,10 @@ export class Grid {
   startEdit(initial?: string, focusEditor = true): void {
     const { row, col } = this.active;
     this.editing = { row, col };
+    this.mode = initial === undefined ? "edit" : "enter";
+    this.pointing = null;
     this.editor.value = initial ?? this.inputAt(row, col);
+    this.editor.dataset.mode = this.mode;
     this.editor.hidden = false;
     this.positionEditor();
     if (focusEditor) {
@@ -282,6 +323,7 @@ export class Grid {
       this.startEdit(text, false);
     } else {
       this.editor.value = text;
+      this.pointing = null;
       this.positionEditor();
     }
     this.editor.setSelectionRange(cursor, cursor);
@@ -329,6 +371,7 @@ export class Grid {
     this.editor.setSelectionRange(caret, caret);
     this.completing = null;
     this.completion.hide();
+    this.pointing = null;
     this.positionEditor();
     this.emit({ type: "edit", text: this.editor.value });
     this.emit({ type: "caret", position: caret });
@@ -384,7 +427,10 @@ export class Grid {
 
   private closeEditor(): void {
     this.editing = null;
+    this.pointing = null;
     this.editor.hidden = true;
+    this.highlight.hidden = true;
+    this.invalidate(); // drop the reference outlines
     this.completing = null;
     this.completion.hide();
     this.emit({ type: "edit", text: null });
@@ -404,6 +450,7 @@ export class Grid {
     // Grow to fit content.
     s.width = "0";
     s.width = `${Math.min(this.scroller.clientWidth - x, this.editor.scrollWidth + 8)}px`;
+    this.renderHighlight();
     this.positionCompletion();
   }
 
@@ -415,16 +462,129 @@ export class Grid {
     return /[=(,+\-*/^&<>:;]$/.test(before);
   }
 
-  private insertReference(pos: CellPos): void {
-    const start = this.editor.selectionStart;
+  /** Whether arrow keys / clicks should pick a reference rather than move the caret or commit. */
+  private canPoint(): boolean {
+    return this.pointing !== null || (this.editor.selectionStart === this.editor.selectionEnd && this.wantsReference());
+  }
+
+  /**
+   * Put a reference to anchor..focus at the caret, or replace the one being
+   * pointed at, keeping its $-anchoring.
+   */
+  private point(anchor: CellPos, focus: CellPos): void {
+    const clampPos = (p: CellPos) => ({ row: clamp(p.row, 1, MAX_ROWS), col: clamp(p.col, 1, MAX_COLS) });
+    [anchor, focus] = [clampPos(anchor), clampPos(focus)];
     const v = this.editor.value;
-    const ref = a1(pos.row, pos.col);
-    this.editor.value = v.slice(0, start) + ref + v.slice(this.editor.selectionEnd);
-    this.editor.focus();
-    this.editor.setSelectionRange(start + ref.length, start + ref.length);
+    const from = this.pointing?.from ?? this.editor.selectionStart;
+    const to = this.pointing?.to ?? this.editor.selectionEnd;
+    const lock = this.pointing?.lock ?? 0;
+    const ref = formatRef(anchor.row, anchor.col, focus.row, focus.col, lock);
+    this.editor.value = v.slice(0, from) + ref + v.slice(to);
+    this.pointing = { from, to: from + ref.length, anchor, focus, lock };
+    this.afterRefChange(from + ref.length);
+    this.ensureExtent(focus.row, focus.col);
+    this.scrollIntoView(focus);
+  }
+
+  /** Arrow keys while pointing: move (or with Shift, extend) the picked range, starting from the edited cell. */
+  private pointMove(e: KeyboardEvent, dr: number, dc: number, dir: "up" | "down" | "left" | "right"): void {
+    const p = this.pointing ?? { anchor: this.editing!, focus: this.editing! };
+    const from = e.shiftKey ? p.focus : p.anchor;
+    const to = e.ctrlKey || e.metaKey ? this.engine.edge(this.sheet, from.row, from.col, dir) : { row: from.row + dr, col: from.col + dc };
+    this.point(e.shiftKey ? p.anchor : to, to);
+  }
+
+  /**
+   * F4: cycle the reference at `caret` (or the one being pointed at) through
+   * A1 → $A$1 → A$1 → $A1. Used by the in-cell editor and the formula bar.
+   */
+  cycleReference(caret = this.editor.selectionStart): boolean {
+    if (!this.editing) return false;
+    const v = this.editor.value;
+    const span = this.pointing ?? referenceAt(this.engine, v, caret);
+    if (!span) return false;
+    const ref = cycleLock(v.slice(span.from, span.to));
+    this.editor.value = v.slice(0, span.from) + ref + v.slice(span.to);
+    if (this.pointing) Object.assign(this.pointing, { to: span.from + ref.length, lock: refLock(ref) });
+    this.afterRefChange(span.from + ref.length, false);
+    return true;
+  }
+
+  /** Sync caret, completion, layout and listeners after the editor text was changed programmatically. */
+  private afterRefChange(caret: number, focusEditor = true): void {
+    if (focusEditor) this.editor.focus();
+    this.editor.setSelectionRange(caret, caret);
     this.completing = null;
     this.completion.hide();
+    this.positionEditor();
+    this.invalidate();
     this.emit({ type: "edit", text: this.editor.value });
+    this.emit({ type: "caret", position: caret });
+  }
+
+  // ---- reference highlighting
+
+  /**
+   * References in the formula being edited, coloured like Excel: each
+   * distinct reference gets the next colour, repeats share it.
+   */
+  formulaReferences(text = this.editor.value): FormulaReference[] {
+    if (!this.editing || !text.startsWith("=")) return [];
+    if (this.refsCache?.text === text) return this.refsCache.refs;
+    const sheetName = this.engine.sheets()[this.sheet]?.name.toLowerCase();
+    const colors = new Map<string, number>();
+    const refs: FormulaReference[] = [];
+    for (const t of this.engine.tokenize(text.slice(1))) {
+      if (t.kind !== "ref" && t.kind !== "range") continue;
+      const key = text.slice(t.start + 1, t.end + 1).replace(/\$/g, "").toUpperCase();
+      if (!colors.has(key)) colors.set(key, colors.size);
+      const here = !t.sheet || t.sheet.toLowerCase() === sheetName;
+      refs.push({ from: t.start + 1, to: t.end + 1, color: colors.get(key)!, bounds: here ? { r1: t.r1!, c1: t.c1!, r2: t.r2!, c2: t.c2! } : null });
+    }
+    this.refsCache = { text, refs };
+    return refs;
+  }
+
+  referenceColor(slot: number): string {
+    const colors = (this.dark.matches ? DARK : LIGHT).refColors;
+    return colors[slot % colors.length]!;
+  }
+
+  /** The editor text split into runs, references carrying their colour; null when not editing a formula. */
+  formulaSegments(text: string): { text: string; color?: string }[] | null {
+    if (!this.editing || !text.startsWith("=")) return null;
+    const out: { text: string; color?: string }[] = [];
+    let pos = 0;
+    for (const r of this.formulaReferences(text)) {
+      if (r.from > pos) out.push({ text: text.slice(pos, r.from) });
+      out.push({ text: text.slice(r.from, r.to), color: this.referenceColor(r.color) });
+      pos = r.to;
+    }
+    if (pos < text.length) out.push({ text: text.slice(pos) });
+    return out;
+  }
+
+  private renderHighlight(): void {
+    const segments = this.editing ? this.formulaSegments(this.editor.value) : null;
+    this.editor.classList.toggle("highlighted", !!segments);
+    this.highlight.hidden = !segments;
+    if (!segments) return;
+    this.highlight.replaceChildren(
+      ...segments.map((seg) => {
+        const span = document.createElement("span");
+        span.textContent = seg.text;
+        if (seg.color) {
+          span.style.color = seg.color;
+          span.dataset.ref = "";
+        }
+        return span;
+      }),
+    );
+    const e = this.editor.style;
+    Object.assign(this.highlight.style, { left: e.left, top: e.top, width: e.width, minWidth: e.minWidth, height: e.height, font: e.font });
+    this.highlight.scrollTop = this.editor.scrollTop;
+    this.highlight.scrollLeft = this.editor.scrollLeft;
+    this.invalidate();
   }
 
   // ---- clipboard
@@ -514,13 +674,7 @@ export class Grid {
       return;
     }
     const page = Math.max(1, Math.floor((this.scroller.clientHeight - COL_HEADER_HEIGHT) / this.rows.defaultSize) - 1);
-    const arrows: Record<string, [number, number, "up" | "down" | "left" | "right"]> = {
-      ArrowUp: [-1, 0, "up"],
-      ArrowDown: [1, 0, "down"],
-      ArrowLeft: [0, -1, "left"],
-      ArrowRight: [0, 1, "right"],
-    };
-    const arrow = arrows[e.key];
+    const arrow = ARROWS[e.key];
     if (arrow) {
       if (mod) {
         const from = e.shiftKey ? this.selection.focus : this.selection.anchor;
@@ -569,8 +723,24 @@ export class Grid {
   }
 
   private onEditorKey(e: KeyboardEvent): void {
+    const arrow = ARROWS[e.key];
+    // The list shown for a bare "=" or "(" shouldn't steal ↑↓ from pointing at cells.
+    if (arrow && this.mode === "enter" && this.completing?.from === this.completing?.to && this.canPoint()) {
+      this.completing = null;
+      this.completion.hide();
+    }
     if (this.handleCompletionKey(e)) return;
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    if (arrow && this.mode === "enter" && !e.altKey && (this.canPoint() || !this.completion.visible)) {
+      if (this.canPoint()) this.pointMove(e, ...arrow);
+      else if (e.shiftKey || e.ctrlKey || e.metaKey) return; // select text
+      else this.commitEdit([arrow[0], arrow[1]]); // Excel: arrows commit plain entries
+    } else if (e.key === "F2") {
+      this.mode = this.mode === "enter" ? "edit" : "enter";
+      this.editor.dataset.mode = this.mode;
+      this.pointing = null;
+    } else if (e.key === "F4") {
+      this.cycleReference();
+    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       this.commitEdit(null, true);
     } else if (e.key === "Enter" && !e.altKey) {
       this.commitEdit([e.shiftKey ? -1 : 1, 0]);
@@ -584,6 +754,8 @@ export class Grid {
     } else if (e.key === "Escape") {
       this.cancelEdit();
     } else {
+      // Anything else that moves the caret or edits fixes the pointed reference in place.
+      if (!["Shift", "Control", "Alt", "Meta"].includes(e.key)) this.pointing = null;
       requestAnimationFrame(() => this.positionEditor());
       return;
     }
@@ -632,8 +804,22 @@ export class Grid {
       if (col !== null) return this.dragResize(e, col);
     }
 
-    if (this.editing && !h.inColHeader && !h.inRowHeader && this.wantsReference()) {
-      this.insertReference({ row: h.row, col: h.col });
+    if (this.editing && !h.inColHeader && !h.inRowHeader && this.canPoint()) {
+      // Click picks a reference, drag picks a range, Shift+click extends the one being pointed at.
+      const anchor = e.shiftKey && this.pointing ? this.pointing.anchor : { row: h.row, col: h.col };
+      this.point(anchor, { row: h.row, col: h.col });
+      const onMove = (ev: MouseEvent) => {
+        const m = this.hit(ev);
+        this.autoScroll(m.x, m.y);
+        const f = this.pointing?.focus;
+        if (f && (f.row !== m.row || f.col !== m.col)) this.point(anchor, { row: m.row, col: m.col });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
       return;
     }
     if (this.editing) this.commitEdit(null);
@@ -818,6 +1004,21 @@ export class Grid {
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const t = performance.now();
+    const motion = !this.reducedMotion.matches;
+    const selKey = JSON.stringify(selectionBounds(this.selection));
+    const refKey = this.pointing ? JSON.stringify(selectionBounds(this.pointing)) : "";
+    const sel = this.selTween.at(this.rectOf(this.selection), t, motion && selKey !== this.paintedKeys.sel);
+    const ref = this.pointing ? this.refTween.at(this.rectOf(this.pointing), t, motion && refKey !== this.paintedKeys.ref) : null;
+    this.paintedKeys = { sel: selKey, ref: refKey };
+    if (!this.pointing) this.refTween.reset(); // a new reference appears in place
+    if (sel.moving || ref?.moving) this.invalidate();
+    const references = this.formulaReferences().flatMap((r) => {
+      if (!r.bounds) return [];
+      const { r1, c1, r2, c2 } = r.bounds;
+      // The reference being picked slides with the arrow keys.
+      const rect = ref && r.from === this.pointing!.from ? ref.rect : this.rectOf({ anchor: { row: r1, col: c1 }, focus: { row: r2, col: c2 } });
+      return [{ rect, color: this.referenceColor(r.color) }];
+    });
     render(
       this.ctx,
       {
@@ -829,7 +1030,9 @@ export class Grid {
         width: w,
         height: h,
         selection: this.selection,
+        selectionRect: sel.rect,
         active: this.active,
+        references,
         palette: this.dark.matches ? DARK : LIGHT,
         font: FONT,
       },
@@ -837,6 +1040,12 @@ export class Grid {
     );
     this.paintTimes.push(performance.now() - t);
     if (this.paintTimes.length > 600) this.paintTimes.splice(0, 300);
+  }
+
+  /** A selection's outline in sheet px. */
+  private rectOf(s: Selection): Rect {
+    const b = selectionBounds(s);
+    return { x1: this.cols.offset(b.c1), y1: this.rows.offset(b.r1), x2: this.cols.offset(b.c2 + 1), y2: this.rows.offset(b.r2 + 1) };
   }
 
   private emit(e: GridEvent): void {
@@ -863,6 +1072,13 @@ function structuralShortcut(e: KeyboardEvent): "insert" | "delete" | null {
   if (e.key === "-" || e.code === "Minus" || e.code === "NumpadSubtract") return "delete";
   return null;
 }
+
+const ARROWS: Record<string, [number, number, "up" | "down" | "left" | "right"]> = {
+  ArrowUp: [-1, 0, "up"],
+  ArrowDown: [1, 0, "down"],
+  ArrowLeft: [0, -1, "left"],
+  ArrowRight: [0, 1, "right"],
+};
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
