@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartLayer, type EditTarget } from "../charts/ChartLayer";
 import { CHART_TYPES, type ChartType } from "../charts/model";
 import type { Grid } from "../grid/grid";
-import { CustomFunctions, emptyCustomState, SHADOW_SHEET } from "../python/customfns";
+import { baseName, importFile, IMPORTABLE } from "../io/files";
+import { CustomFunctions,emptyCustomState, SHADOW_SHEET } from "../python/customfns";
 import { matchingRefs } from "../python/edits";
 import { PythonHost } from "../python/host";
 import { ConsoleStore } from "./console";
@@ -163,6 +164,63 @@ export function App({ initial }: { initial: Workbook }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [engine]);
 
+  // Drag files from the desktop anywhere onto the page to import them, like File → Import.
+  const switchToRef = useRef(switchTo);
+  switchToRef.current = switchTo;
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    let depth = 0; // dragenter/leave fire for every child crossed
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (depth++ === 0) setDragging(true);
+    };
+    const onOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "copy";
+    };
+    const onLeave = (e: DragEvent) => {
+      if (hasFiles(e) && --depth <= 0) {
+        depth = 0;
+        setDragging(false);
+      }
+    };
+    const onDrop = async (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      const files = [...(e.dataTransfer?.files ?? [])].filter((f) => IMPORTABLE.test(f.name));
+      if (!files.length) return setNotice("Only .csv, .tsv, .txt and .xlsx files can be imported");
+      // An .xlsx replaces the workbook, so it can't be combined with sheets added to this one.
+      const xlsx = files.find((f) => /\.xlsx$/i.test(f.name));
+      let added: number | undefined;
+      for (const file of xlsx ? [xlsx] : files) {
+        try {
+          const result = await importFile(engine, file);
+          if ("engine" in result) void switchToRef.current(Workbook.create(baseName(file.name), result.engine));
+          else added = result.sheet;
+        } catch (err) {
+          setNotice(`Couldn't import ${file.name}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (added !== undefined) selectSheetRef.current(added);
+    };
+    const drop = (e: DragEvent) => void onDrop(e);
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", drop);
+    };
+  }, [engine]);
+
   return (
     <div className="app">
       <Toolbar key={workbook.id} workbook={workbook} onOpen={(id) => void switchTo(Workbook.open(id))} onNew={() => void switchTo(Workbook.create())}>
@@ -213,6 +271,11 @@ export function App({ initial }: { initial: Workbook }) {
         </div>
         {charts && chartEdit && <ChartPanel layer={charts} target={chartEdit} onClose={closeChartEdit} />}
         {showScripts && <ScriptPanel key={workbook.id} workbook={workbook} host={python} console={consoleStore} />}
+        {dragging && (
+          <div className="drop-overlay" data-testid="drop-overlay">
+            Drop .csv or .xlsx to import
+          </div>
+        )}
       </div>
     </div>
   );
