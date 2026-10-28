@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { baseName, download, exportCsv, importCsv, readXlsx, xlsxBlob } from "../io/files";
+import { baseName, download, exportCsv, importFile, xlsxBlob } from "../io/files";
 import type { ExportOptions } from "../io/xlsx";
 import { Workbook } from "./workbook";
 
@@ -18,12 +18,9 @@ export function FileMenu({ workbook, sheet, exportOptions, onOpenWorkbook, onShe
   const onFile = async (file: File) => {
     setError(null);
     try {
-      if (/\.xlsx$/i.test(file.name)) {
-        const engine = await readXlsx(file);
-        onOpenWorkbook(Workbook.create(baseName(file.name), engine));
-      } else {
-        onSheetAdded(importCsv(workbook.engine, await file.text(), baseName(file.name)));
-      }
+      const result = await importFile(workbook.engine, file);
+      if ("engine" in result) onOpenWorkbook(Workbook.create(baseName(file.name), result.engine));
+      else onSheetAdded(result.sheet);
     } catch (e) {
       setError(`Couldn't import ${file.name}: ${e instanceof Error ? e.message : String(e)}`);
     }

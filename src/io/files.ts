@@ -15,6 +15,15 @@ export async function xlsxBlob(engine: Engine, opts?: ExportOptions): Promise<Bl
   return new Blob([bytes as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
 
+/** Files the importer accepts (the file picker and drag-and-drop). */
+export const IMPORTABLE = /\.(xlsx|csv|tsv|txt)$/i;
+
+/** An .xlsx opens as a new workbook; anything else is read as CSV into a new sheet of `engine`. */
+export async function importFile(engine: Engine, file: File): Promise<{ engine: IronCalcEngine } | { sheet: number }> {
+  if (/\.xlsx$/i.test(file.name)) return { engine: await readXlsx(file) };
+  return { sheet: importCsv(engine, await file.text(), baseName(file.name)) };
+}
+
 /** Import CSV text into a new sheet; returns its index. */
 export function importCsv(engine: Engine, text: string, name: string): number {
   const rows = parseCsv(text);
